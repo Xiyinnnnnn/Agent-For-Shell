@@ -31,7 +31,13 @@ esac
 
 CURL=$(command -v curl 2>/dev/null || echo /data/data/com.termux/files/usr/bin/curl)
 
-BL="rm:mv:dd:mkfs:format:wipe:reboot:shutdown:su:mount:chmod:chown:killall:pm uninstall:pm clear:settings put:setprop"
+BL="rm
+dd
+su
+pm uninstall
+pm clear
+chmod -R 777
+:(){"
 
 esc() {
   printf '%s' "$1" | tr '\n' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g' | sed 's/\t/\\t/g; s/\r/\\r/g'
@@ -160,10 +166,11 @@ run_cmd() {
   c=$(printf '%s' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [ -z "$c" ] && { echo "[安全] 空命令"; return 1; }
   OLDIFS=$IFS
-  IFS=':'
+  IFS='
+'
   for b in $BL; do
     IFS=$OLDIFS
-    case " $c " in *" $b "*)
+    case " $c " in *" $b "*|"$b "*|"$b."*|"$b:"*|"$b")
       echo "──────────────────────────────────" >&2
       echo "⚠ 危险命令，需要物理按键授权：" >&2
       echo "   命令: $c" >&2
