@@ -19,15 +19,17 @@ DeepSeek 驱动的终端 agent · 跑在  幻•实验室终端
 
 ## 是什么
 
-只要 `curl` + `awk` + `sed` + `grep`。
+一个 `.sh` 文件部署完整 agent。只要 `curl` + `awk` + `sed` + `grep`（Android / adb shell 全内置），零依赖、超轻量，头部三个参数即配即用。
 
 ## 特性
 
-- **工具闭环** — 
-- **物理按键授权** —
-- **零依赖** — 纯 sh
-- **上下文压缩** — token 超限自动 summarize
-- **默认继承adb权限**
+- **批量调用** — 一次响应可发多条 `tool_calls`（建议 ≤8 条），脚本按序执行、逐条回填结果，不用等上一条返回
+- **工具闭环** — 标准 `tool_calls` 批量捕获 + 正文内嵌调用双通道；解析失败自动回灌原文，引导模型自纠，不空转
+- **物理按键授权** — 黑名单命令需物理按键确认：音量上=同意 / 音量下=拒绝 / 60s 无操作自动拒绝
+- **零依赖** — 纯 POSIX sh，仅 `curl` `awk` `sed` `grep`，无 Python / 无 Node / 无第三方库
+- **上下文压缩** — token 超限自动 summarize 历史为摘要，长会话不断链
+- **记忆系统** — 自动读写 `/data/local/tmp/agent_mem/YYYYMMDD.md`，跨会话复用结论
+- **默认继承 adb 权限** — 直接跑 `dumpsys` / `getprop` / `settings` / `pm` / `am` 等系统命令
 
 ## 权限模型
 
@@ -48,21 +50,22 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[组装 messages] --> B[ask_llm 流式调用 DeepSeek]
+    A[组装 messages] --> B[ask_llm 调用 DeepSeek]
     B --> C{usage 超限?}
     C -- 是 --> D[compress_summary 压缩上下文]
     D --> A
-    C -- 否 --> E{tool_calls?}
-    E -- 是 --> F[提取 command]
-    F --> G[权限模型判定]
-    G --> H[执行 + 结果回填]
-    H --> A
-    E -- 否 --> I{正文内嵌调用?}
-    I -- 是 --> J{同命令重复 ≥3?}
-    J -- 否 --> F
-    J -- 是 --> K[防循环截断]
-    I -- 否 --> K
-    K --> L[输出回答]
+    C -- 否 --> E{标准 tool_calls?}
+    E -- 是 --> F[阶段1 引号状态机拆块<br/>解析 id/name/arguments → 回灌 assistant 数组]
+    F --> G[阶段2 逐条提取 command]
+    G --> H[权限模型判定]
+    H --> I[执行 + 逐条回填 tool 消息]
+    I --> A
+    E -- 否 --> J{正文内嵌调用?}
+    J -- 是 --> K{同命令重复 ≥3?}
+    K -- 否 --> G
+    K -- 是 --> L[防循环截断]
+    J -- 否 --> L
+    L --> M[输出回答]
 ```
 
 ## 快速开始

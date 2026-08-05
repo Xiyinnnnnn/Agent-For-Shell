@@ -12,6 +12,8 @@ API_URL="https://api.deepseek.com/chat/completions"
 MODEL_DEFAULT="deepseek-v4-flash"
 MAX_TOK=900000
 AUTH_TIMEOUT=60
+MAX_BATCH_TOOLS=8
+MAX_BATCH_OUT=16000
 
 QUESTION="{{QUESTION}}"
 case "$QUESTION" in
@@ -37,51 +39,94 @@ esc() {
 escj() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g;s/\t/\\t/g;s/\r/\\r/g'
 }
+dec() {
+  printf '%s' "$1" | sed 's/\\"/"/g' | awk '{ gsub(/\\\\/, "\001"); gsub(/\\n/, "\n"); gsub(/\\t/, "\t"); gsub(/\\r/, "\r"); gsub(/\001/, "\\"); print }'
+}
 json_val() {
-  printf '%s' "$1" | awk -v k="\"$2\":" '
-    function dec(s,   r,i,c){
-      r=""; i=1
-      while(i<=length(s)){
-        c=substr(s,i,1)
-        if(c=="\\"){
-          c=substr(s,i+1,1)
-          if(c=="\""){r=r"\""; i+=2}
-          else if(c=="\\"){r=r"\\"; i+=2}
-          else if(c=="n"){r=r"\n"; i+=2}
-          else if(c=="t"){r=r"\t"; i+=2}
-          else if(c=="/"){r=r"/"; i+=2}
-          else if(c=="r"){r=r"\r"; i+=2}
-          else {r=r c; i+=2}
-        } else {r=r c; i++}
-      }
-      return r
+  printf '%s' "$1" | LC_ALL=C awk -v k="\"$2\":" '
+  {
+    kl = length(k)
+    p = 0
+    i = 1
+    found = 0
+    while (found == 0) {
+      if (substr($0, i, kl) == k) { p = i; found = 1 }
+      else if (substr($0, i, 1) == "") { found = 2 }
+      else { i = i + 1 }
     }
-    {p=index($0,k);
-     if(p>0){
-       t=substr($0,p+length(k));
-       sub(/^[ \t]*/,"",t);
-       if(substr(t,1,1)=="\""){
-         t=substr(t,2);
-         if(t=="" || substr(t,1,1)=="," || substr(t,1,1)=="}" || substr(t,1,1)=="]"){
-           print ""; next
-         }
-         n=length(t); i=1; f=0;
-         while(i<=n && f==0){
-           if(substr(t,i,1)=="\""){
-             b=0; j=i-1;
-             while(j>=1 && substr(t,j,1)=="\\"){b++; j--}
-             if(b%2==0){f=1} else {i++}
-           } else {i++}
-         }
-         if(f==1){v=substr(t,1,i-1); print dec(v)}
-         else {print ""}
-       } else {
-         v=t; sub(/^[ \t]*/,"",v);
-         sub(/[^0-9A-Za-z.+-].*$/,"",v);
-         if(v=="null"||v=="true"||v=="false") v="";
-         print v
-       }
-     }}'
+    if (p > 0) {
+      t = substr($0, p + kl)
+      sub(/^[ ]*/, "", t)
+      if (substr(t, 1, 1) == "\"") {
+        s = substr(t, 2)
+        i = 1
+        f = 0
+        while (f == 0) {
+          c = substr(s, i, 1)
+          if (c == "") { f = 2 }
+          else if (c == "\\") { i = i + 2 }
+          else if (c == "\"") { f = 1 }
+          else { i = i + 1 }
+        }
+        if (f == 1) { print substr(s, 1, i - 1) }
+      }
+    }
+  }'
+}
+
+json_arr_blocks() {
+  printf '%s' "$1" | LC_ALL=C awk -v k="\"$2\":" '
+  {
+    kl = length(k)
+    p = 0
+    i = 1
+    found = 0
+    while (found == 0) {
+      if (substr($0, i, kl) == k) { p = i; found = 1 }
+      else if (substr($0, i, 1) == "") { found = 2 }
+      else { i = i + 1 }
+    }
+    if (p > 0) {
+      t = substr($0, p + kl)
+      sub(/^[ ]*/, "", t)
+      if (substr(t, 1, 1) == "[") {
+        i = 1
+        depth = 0
+        instr = 0
+        blk = ""
+        done = 0
+        while (done == 0) {
+          c = substr(t, i, 1)
+          if (c == "") { done = 1 }
+          else if (instr == 1) {
+            if (c == "\\") {
+              blk = blk substr(t, i, 2)
+              i = i + 2
+            } else {
+              if (c == "\"") { instr = 0 }
+              blk = blk c
+              i = i + 1
+            }
+          } else {
+            if (c == "\"") { instr = 1; blk = blk c; i = i + 1 }
+            else if (c == "{") {
+              depth = depth + 1
+              if (depth == 1) { blk = "{" } else { blk = blk c }
+              i = i + 1
+            }
+            else if (c == "}" && depth > 0) {
+              depth = depth - 1
+              blk = blk "}"
+              i = i + 1
+              if (depth == 0) { print blk; blk = "" }
+            }
+            else if (c == "]" && depth == 0) { done = 1 }
+            else { blk = blk c; i = i + 1 }
+          }
+        }
+      }
+    }
+  }'
 }
 
 wait_vol() {
@@ -143,12 +188,23 @@ run_ui() {
   rm -f "$T"
 }
 
-extract_tool_call() {
+
+extract_tool_calls() {
   FLAT=$(printf '%s' "$1" | tr '\n' ' ')
-  C=$(printf '%s' "$FLAT" | sed -n 's/.*\[CMD\]\([^[]*\)\[\/CMD\].*/\1/p' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-  [ -n "$C" ] && { printf '%s' "$C"; return 0; }
+  ALL=$(printf '%s' "$FLAT" | grep -o '\[CMD\][^[]*\[/CMD\]' | sed 's/^\[CMD\]//; s/\[\/CMD\]$//' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$')
+  if [ -n "$ALL" ]; then
+    printf '%s\n' "$ALL"
+    return 0
+  fi
   C=$(printf '%s' "$FLAT" | sed -n 's/.*<parameter[^>]*name="command"[^>]*>\([^<]*\)<\/parameter>.*/\1/p' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [ -n "$C" ] && { printf '%s' "$C"; return 0; }
+  # 兜底:模型误用 arguments 作为参数名时,从 <parameter name="arguments"> 内容中二次解析 command
+  C=$(printf '%s' "$FLAT" | sed -n 's/.*<parameter[^>]*name="arguments"[^>]*>\([^<]*\)<\/parameter>.*/\1/p' | head -n 1)
+  if [ -n "$C" ]; then
+    C2=$(printf '%s' "$C" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+    [ -z "$C2" ] && C2=$(printf '%s' "$C" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    [ -n "$C2" ] && { printf '%s' "$C2"; return 0; }
+  fi
   B=$(printf '%s' "$FLAT" | grep -o -E '(run_terminal|terminal|shell|bash|exec|cmd|run|终端|执行|运行|命令)[[:space:]]*\([^)]*\)' | head -n 1)
   if [ -n "$B" ]; then
     B2=$(printf '%s' "$B" | sed 's/^[^()]*([[:space:]]*//; s/)[[:space:]]*$//')
@@ -169,13 +225,17 @@ ask_llm() {
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
     -d "$1" > "$RESP_TMP" 2>/dev/null
-  ACCUM=""; TC_ARGS=""; TC_ID=""; TOTAL_USAGE=0; REASON=""
+  ACCUM=""; TC_ARGS=""; TC_ID=""; TOTAL_USAGE=0; REASON=""; TC_RAW=""
   RESP=$(cat "$RESP_TMP" 2>/dev/null)
+  TC_RAW="$RESP"
   C=$(json_val "$RESP" content)
+  [ -n "$C" ] && C=$(dec "$C")
   TCA=$(json_val "$RESP" arguments)
+  [ -n "$TCA" ] && TCA=$(dec "$TCA")
   TCID=$(printf '%s' "$RESP" | sed -n 's/.*"tool_calls":[[:space:]]*\[[[:space:]]*{"id":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
   U=$(json_val "$RESP" total_tokens)
   R=$(json_val "$RESP" reasoning_content)
+  [ -n "$R" ] && R=$(dec "$R")
   [ -n "$C" ] && ACCUM="$C"
   [ -n "$TCA" ] && TC_ARGS="$TCA"
   [ -n "$TCID" ] && TC_ID="$TCID"
@@ -213,6 +273,7 @@ compress_summary() {
   RESP=$("$CURL" -s --max-time 300 "$API_URL" \
     -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d "$BODY")
   NEW=$(json_val "$RESP" content)
+  [ -n "$NEW" ] && NEW=$(dec "$NEW")
   [ -z "$NEW" ] && NEW=$(json_val "$RESP" message)
   [ -z "$NEW" ] && NEW="解析失败"
   SUMMARY="历史背景：$NEW"
@@ -228,6 +289,9 @@ SYS='[ROLE] Agent For Shell | [LANG] zh-CN
 [MUST] 代码/命令/列表用```包裹，不准裸文本
 [MUST] 算优于估：dumpsys/getprop/ls/cat实测，不目测
 [TOOL] 唯一工具 run_terminal，参数 command+explain+dangerous
+[TOOL] 批量：一次响应可发多条 tool_calls（建议≤8条），脚本按序执行、逐条回填结果，不用等上一条返回
+[TOOL] 工具参数名固定为 command/explain/dangerous；arguments 是 API 协议字段名，不是工具参数，严禁把 arguments 当参数名使用
+[TOOL] 若工具结果提示"缺少 command 参数"或"缺少 arguments"→ 说明你发送的 arguments 里没有 command 字段，检查后立即用正确参数名重发，不要反复空转
 
 [SYS] 环境=adb shell 权限，可执行 dumpsys/settings/getprop/pm/am/input 等系统命令
 [SAFETY] 禁止危险操作(删除/覆盖/格式化/卸载/重启/提权)：
@@ -275,39 +339,121 @@ while :; do
     compress_summary
   fi
 
-  if [ -n "$TC_ARGS" ]; then
-    CMD=$(json_val "$TC_ARGS" command)
-    if [ -n "$CMD" ]; then
-      [ -n "$TC_ID" ] || TC_ID="call_gen"
-      echo "[工具] $CMD"
-      OUT=$(run_ui "$CMD")
-      echo "$OUT"
-      if [ -n "$ACCUM" ]; then CONTENT_JSON=$(printf '"%s"' "$(esc "$ACCUM")"); else CONTENT_JSON="null"; fi
-      if [ -n "$REASON" ]; then REASON_JSON=$(printf '"%s"' "$(escj "$REASON")"); else REASON_JSON="null"; fi
-      MSGS="$MSGS,{\"role\":\"assistant\",\"content\":$CONTENT_JSON,\"reasoning_content\":$REASON_JSON,\"tool_calls\":[{\"id\":\"$TC_ID\",\"type\":\"function\",\"function\":{\"name\":\"run_terminal\",\"arguments\":$(printf '"%s"' "$(esc "$TC_ARGS")")}}]}"
-      MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_ID\",\"content\":$(printf '"%s"' "$(esc "$OUT")")}"
-      continue
+
+  if [ -n "$TC_RAW" ]; then
+    TCB_TMP=/data/local/tmp/agent_tc_$$.txt
+    json_arr_blocks "$TC_RAW" tool_calls > "$TCB_TMP"
+    if [ -s "$TCB_TMP" ]; then
+      # 阶段1: 解析全部工具调用,构建 assistant tool_calls 数组(一次回灌)
+      TCS_JSON=""; TC_COUNT=0
+      while IFS= read -r TC_B; do
+        [ "$TC_COUNT" -ge "$MAX_BATCH_TOOLS" ] && break
+        TC_BID=$(json_val "$TC_B" id)
+        TC_BNAME=$(json_val "$TC_B" name)
+        TC_BARGS=$(json_val "$TC_B" arguments)
+        [ -n "$TC_BARGS" ] && TC_BARGS=$(dec "$TC_BARGS")
+        [ -z "$TC_BID" ] && TC_BID="call_${TC_COUNT}"
+        [ -z "$TC_BNAME" ] && TC_BNAME="run_terminal"
+        if [ -n "$TC_BARGS" ]; then ARGS_JSON=$(printf '"%s"' "$(esc "$TC_BARGS")"); else ARGS_JSON='""'; fi
+        TCS_JSON="$TCS_JSON,{\"id\":\"$TC_BID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_BNAME\",\"arguments\":$ARGS_JSON}}"
+        TC_COUNT=$((TC_COUNT + 1))
+      done < "$TCB_TMP"
+      if [ "$TC_COUNT" -gt 0 ]; then
+        TCS_JSON=$(printf '%s' "$TCS_JSON" | sed 's/^,//')
+        if [ -n "$ACCUM" ]; then CONTENT_JSON=$(printf '"%s"' "$(esc "$ACCUM")"); else CONTENT_JSON="null"; fi
+        if [ -n "$REASON" ]; then REASON_JSON=$(printf '"%s"' "$(escj "$REASON")"); else REASON_JSON="null"; fi
+        MSGS="$MSGS,{\"role\":\"assistant\",\"content\":$CONTENT_JSON,\"reasoning_content\":$REASON_JSON,\"tool_calls\":[$TCS_JSON]}"
+        # 阶段2: 逐个顺序执行,每条结果逐条回填 tool 消息
+        TC_EXEC=0; TOTAL_OUT=0; SKIP=0
+        while IFS= read -r TC_B; do
+          TC_EXEC=$((TC_EXEC + 1))
+          TC_BID=$(json_val "$TC_B" id)
+          [ -z "$TC_BID" ] && TC_BID="call_$((TC_EXEC - 1))"
+          TC_BARGS_RAW=$(json_val "$TC_B" arguments)
+          TC_BARGS=$(dec "$TC_BARGS_RAW")
+          CMD=$(json_val "$TC_BARGS" command)
+          [ -n "$CMD" ] && CMD=$(dec "$CMD")
+          if [ -z "$CMD" ] && [ -n "$TC_BARGS" ]; then
+            CMD=$(printf '%s' "$TC_BARGS" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed 's/^"command"[[:space:]]*:[[:space:]]*"//; s/"$//')
+            [ -n "$CMD" ] && CMD=$(dec "$CMD")
+          fi
+          if [ -n "$CMD" ]; then
+            if [ "$SKIP" -eq 1 ]; then
+              MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"(输出预算超限,本命令未执行)\"}"
+              continue
+            fi
+            echo "[工具] $CMD"
+            OUT=$(run_ui "$CMD")
+            echo "$OUT"
+            TOTAL_OUT=$((TOTAL_OUT + ${#OUT}))
+            MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":$(printf '"%s"' "$(esc "$OUT")")}"
+            if [ "$TOTAL_OUT" -gt "$MAX_BATCH_OUT" ]; then
+              echo "[批量] 输出预算超限(${TOTAL_OUT}>${MAX_BATCH_OUT}),剩余命令跳过"
+              SKIP=1
+            fi
+          else
+            if [ -n "$TC_BARGS_RAW" ]; then
+              MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"工具调用解析失败(缺 command)。arguments 原文:$(esc "$TC_BARGS_RAW")。请继续用 command/explain/dangerous 发送\"}"
+            else
+              MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"工具调用解析失败,请继续正常发送\"}"
+            fi
+          fi
+          done < "$TCB_TMP"
+        rm -f "$TCB_TMP"
+        continue
+      fi
     fi
+    rm -f "$TCB_TMP"
   fi
 
-  CMD2=$(extract_tool_call "$ACCUM")
+  CMD2=$(extract_tool_calls "$ACCUM")
   if [ -n "$CMD2" ]; then
-    if [ "$CMD2" = "$LAST_CAUGHT" ]; then
-      REPEAT=$((REPEAT + 1))
-      if [ "$REPEAT" -ge 3 ]; then
-        echo "[防循环] 正文同一命令重复3次，按回答输出"
-        break
+    CMDS_TMP=/data/local/tmp/agent_cmds_$$.txt
+    printf '%s\n' "$CMD2" > "$CMDS_TMP"
+    FIRST=""
+    while IFS= read -r CC; do
+      CC=$(printf '%s' "$CC" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+      [ -n "$CC" ] && [ -z "$FIRST" ] && FIRST="$CC"
+    done < "$CMDS_TMP"
+    if [ -n "$FIRST" ]; then
+      if [ "$FIRST" = "$LAST_CAUGHT" ]; then
+        REPEAT=$((REPEAT + 1))
+        if [ "$REPEAT" -ge 3 ]; then
+          echo "[防循环] 正文同一命令重复3次，按回答输出"
+          break
+        fi
+      else
+        LAST_CAUGHT="$FIRST"
+        REPEAT=1
       fi
-    else
-      LAST_CAUGHT="$CMD2"
-      REPEAT=1
     fi
-    echo "[工具] $CMD2"
-    OUT=$(run_ui "$CMD2")
-    echo "$OUT"
     if [ -n "$REASON" ]; then REASON_JSON=$(printf '"%s"' "$(escj "$REASON")"); else REASON_JSON="null"; fi
     MSGS="$MSGS,{\"role\":\"assistant\",\"content\":$(printf '"%s"' "$(esc "$ACCUM")"),\"reasoning_content\":$REASON_JSON}"
-    MSGS="$MSGS,{\"role\":\"user\",\"content\":\"命令已执行，输出如下：$(esc "$OUT")\"}"
+    OUT_ALL=""; TOTAL_OUT=0; EXEC_TMP=/data/local/tmp/agent_exec_$$.txt; : > "$EXEC_TMP"
+    while IFS= read -r CC; do
+      CC=$(printf '%s' "$CC" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+      [ -z "$CC" ] && continue
+      if grep -Fxq "$CC" "$EXEC_TMP" 2>/dev/null; then
+        echo "[批量] 跳过重复命令: $CC"
+        continue
+      fi
+      if [ "$TOTAL_OUT" -gt "$MAX_BATCH_OUT" ]; then
+        echo "[批量] 输出预算超限,跳过: $CC"
+        continue
+      fi
+      echo "[工具] $CC"
+      OUT=$(run_ui "$CC")
+      echo "$OUT"
+      echo "$CC" >> "$EXEC_TMP"
+      TOTAL_OUT=$((TOTAL_OUT + ${#OUT}))
+      OUT_ALL="$OUT_ALL |cmd| $CC => $OUT"
+    done < "$CMDS_TMP"
+    rm -f "$CMDS_TMP" "$EXEC_TMP"
+    if [ -n "$OUT_ALL" ]; then
+      MSGS="$MSGS,{\"role\":\"user\",\"content\":\"批量命令已执行，输出如下：$(esc "$OUT_ALL")\"}"
+    else
+      MSGS="$MSGS,{\"role\":\"user\",\"content\":\"(未执行任何命令)\"}"
+    fi
     continue
   fi
 
