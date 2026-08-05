@@ -2,10 +2,10 @@
 
 # Agent For Shell
 
-**一个 .sh，让终端拥有 agent。**
+**一个 .sh，部署agent。**
 
-DeepSeek 驱动的终端 agent · 跑在 MT 管理器终端 / 幻·实验室 / adb shell
-
+DeepSeek 驱动的终端 agent · 跑在  幻•实验室终端
+默认仅支持param参数实现
 ![platform](https://img.shields.io/badge/platform-Android%20%2F%20adb%20shell-3DDC84?style=flat-square)
 ![shell](https://img.shields.io/badge/shell-POSIX%20sh-4EAA25?style=flat-square)
 ![model](https://img.shields.io/badge/model-DeepSeek-4D6BFE?style=flat-square)
@@ -19,18 +19,15 @@ DeepSeek 驱动的终端 agent · 跑在 MT 管理器终端 / 幻·实验室 / a
 
 ## 是什么
 
-单文件 POSIX sh 终端 agent。你说话，它思考，**它自己执行命令**，结果回传，继续思考。
-
-没有 Node。没有 Python。没有 jq。只要 `curl` + `awk` + `sed` + `grep`。
+只要 `curl` + `awk` + `sed` + `grep`。
 
 ## 特性
 
-- **工具闭环** — 标准 `tool_calls` + 正文提取双通道，模型跑不偏
-- **物理按键授权** — 危险命令必须按音量键，物理世界最后一道闸
-- **零依赖** — 纯 sh，任何 Android shell 环境直接跑
-- **防循环** — 同一命令重复 3 次自动截断，不让模型原地打转
-- **上下文压缩** — token 超限自动 summarize，长会话不爆
-- **记忆回填** — 每轮结果回灌 messages，模型记得住上下文
+- **工具闭环** — 
+- **物理按键授权** —
+- **零依赖** — 纯 sh
+- **上下文压缩** — token 超限自动 summarize
+- **默认继承adb权限**
 
 ## 权限模型
 
@@ -92,7 +89,7 @@ sh agent.sh
 
 ## 环境要求
 
-- Android 终端：MT 管理器终端模拟器 / 幻·实验室 / adb shell
+- Android 终端：幻·实验室
 - 工具：`curl` `awk` `sed` `grep`（MT 扩展包、Termux 均内置）
 - 物理按键授权需 `getevent`（root / shell 权限）
 
