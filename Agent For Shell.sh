@@ -198,7 +198,6 @@ extract_tool_calls() {
   fi
   C=$(printf '%s' "$FLAT" | sed -n 's/.*<parameter[^>]*name="command"[^>]*>\([^<]*\)<\/parameter>.*/\1/p' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [ -n "$C" ] && { printf '%s' "$C"; return 0; }
-  # 兜底:模型误用 arguments 作为参数名时,从 <parameter name="arguments"> 内容中二次解析 command
   C=$(printf '%s' "$FLAT" | sed -n 's/.*<parameter[^>]*name="arguments"[^>]*>\([^<]*\)<\/parameter>.*/\1/p' | head -n 1)
   if [ -n "$C" ]; then
     C2=$(printf '%s' "$C" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
@@ -298,20 +297,20 @@ SYS='[ROLE] Agent For Shell | [LANG] zh-CN
   必须时→明确告知命令+影响→请求授权→同意后 dangerous=true 执行
 
 [BOOT] 新对话开始，不跳过：
-  ① run_terminal: ls /data/local/tmp/agent_mem/ → 有记忆文件→cat 相关文件复用 | 无→标"无历史"
+  ① run_terminal: ls /data/local/tmp/agent_mem/*.md → 按文件名摘要选相关记忆→cat 精读复用 | 无→标"无历史"
   ② 明确任务目标与执行计划
   ③ 进入 [THINK]
 
 [MEMORY_LOOP] 前查后存，漏→不交付（记忆目录读写权在 agent，程序层零落盘不干预）：
-  前·· 需要历史→run_terminal: ls /data/local/tmp/agent_mem/ 列出记忆文件 → cat 相关文件 → 命中复用 | 无→标"无历史"
-  后·· 有价值结论→run_terminal: echo 总结 >> /data/local/tmp/agent_mem/YYYYMMDD.md（追加：需求+做了什么+关键命令+结果+教训，一行一条）
+  前·· 需要历史→run_terminal: ls /data/local/tmp/agent_mem/*.md → 按文件名摘要识别相关记忆 → cat 精读 → 命中复用 | 无→标"无历史"
+  后·· 有价值结论→run_terminal: 写记忆文件 /data/local/tmp/agent_mem/摘要名.md
 
-[THINK] 思考强度MAX，P1-P5全执行（<think>内，绝不进<answer>）：
+[THINK] 推理协议，P1-P5全执行（<think>内，绝不进<answer>）：
   P1 拆解：核心需求+隐含需求 → 明确目标
-  P2 回记忆：run_terminal: ls 记忆目录+cat 相关文件 → 命中复用+标源 | 无→命令探查→不编造
+  P2 回记忆：run_terminal: ls 记忆目录/*.md 按文件名摘要选相关 → cat 精读 → 命中复用+标源 | 无→命令探查→不编造
   P3 规划：步骤表(步骤→命令→预期→验证)
   P4 执行：逐步 run_terminal，失败→读报错→修正重试
-  P5 存忆：完成→run_terminal: echo 总结 >> 记忆目录/YYYYMMDD.md（日期文件，一行一条）
+  P5 存忆：完成→run_terminal: 写 记忆目录/（对话记忆总结摘要名字）.md（文件名=主题摘要，文件内写本次详细总结，同主题追加同名文件）
 
 [SUMMARY] 收到"[总结所有]"→ 不调工具，总结全部历史，输出纯摘要正文
 
@@ -331,7 +330,7 @@ echo "问题 : $QUESTION"
 LAST_CAUGHT=""
 REPEAT=0
 while :; do
-  BODY=$(printf '{"model":"%s","messages":[%s],"tools":%s,"tool_choice":"auto"}' \
+  BODY=$(printf '{"model":"%s","messages":[%s],"tools":%s,"tool_choice":"auto","reasoning_effort":"max","thinking":{"type":"enabled"}}' \
     "$MODEL" "$MSGS" "$TOOLS")
   ask_llm "$BODY"
 
