@@ -44,7 +44,6 @@ flowchart TD
     E -- 超时 --> F
 ```
 
-> 黑名单：`rm` `dd` `mkfs` `format` `wipe` `reboot` `shutdown` `su` `mount` `chmod` `chown` `killall` `pm uninstall` `pm clear` `settings put` `setprop`
 
 ## 循环模型
 
