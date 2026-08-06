@@ -14,7 +14,7 @@ MAX_TOK=900000
 AUTH_TIMEOUT=60
 REASONING_EFFORT="max"
 MAX_BATCH_TOOLS=8
-MAX_BATCH_OUT=64000
+MAX_BATCH_OUT=128000
 
 QUESTION="{{QUESTION}}"
 case "$QUESTION" in
@@ -217,10 +217,13 @@ extract_tool_calls() {
 }
 
 ask_llm() {
+  while :; do
   RESP=$(print -r -- "$1" | "$CURL" -sS --max-time 300 "$API_URL" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
     -d @- 2>/dev/null)
+    [ -n "$RESP" ] && break
+  done
   ACCUM=""; TC_ARGS=""; TC_ID=""; TOTAL_USAGE=0; REASON=""; TC_RAW=""
   TC_RAW="$RESP"
   C=$(json_val "$RESP" content)
