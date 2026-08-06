@@ -12,7 +12,7 @@ API_URL="https://api.deepseek.com/chat/completions"
 MODEL_DEFAULT="deepseek-v4-flash"
 MAX_TOK=900000
 AUTH_TIMEOUT=60
-REASONING_EFFORT="medium"
+REASONING_EFFORT="max"
 MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=64000
 
