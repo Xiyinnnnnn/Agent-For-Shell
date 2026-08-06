@@ -378,7 +378,6 @@ while :; do
             fi
             echo "[工具] $CMD"
             OUT=$(run_ui "$CMD")
-            echo "$OUT"
             TOTAL_OUT=$((TOTAL_OUT + ${#OUT}))
             MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"$(esc "$OUT")\"}"
             if [ "$TOTAL_OUT" -gt "$MAX_BATCH_OUT" ]; then
@@ -432,7 +431,6 @@ while :; do
       fi
       echo "[工具] $CC"
       OUT=$(run_ui "$CC")
-      echo "$OUT"
       print -r -- "$CC" >> "$EXEC_TMP"
       TOTAL_OUT=$((TOTAL_OUT + ${#OUT}))
       OUT_ALL="$OUT_ALL |cmd| $CC => $OUT"
