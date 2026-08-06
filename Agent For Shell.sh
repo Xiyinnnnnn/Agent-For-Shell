@@ -217,12 +217,10 @@ extract_tool_calls() {
 }
 
 ask_llm() {
-  RESP_TMP=/data/local/tmp/agent_resp_$$.txt
-  print -r -- "$1" | "$CURL" -sS --max-time 300 "$API_URL" \
+  RESP=$(print -r -- "$1" | "$CURL" -sS --max-time 300 "$API_URL" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
-    -d @- > "$RESP_TMP" 2>/dev/null
-  RESP=$(cat "$RESP_TMP" 2>/dev/null)
+    -d @- 2>/dev/null)
   ACCUM=""; TC_ARGS=""; TC_ID=""; TOTAL_USAGE=0; REASON=""; TC_RAW=""
   TC_RAW="$RESP"
   C=$(json_val "$RESP" content)
