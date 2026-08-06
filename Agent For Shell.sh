@@ -217,12 +217,16 @@ extract_tool_calls() {
 }
 
 ask_llm() {
+  i=0
   while :; do
   RESP=$(print -r -- "$1" | "$CURL" -sS --max-time 300 "$API_URL" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
     -d @- 2>/dev/null)
     [ -n "$RESP" ] && break
+    i=$((i + 1))
+    [ "$i" -ge 10 ] && break
+    sleep 0.1
   done
   ACCUM=""; TC_ARGS=""; TC_ID=""; TOTAL_USAGE=0; REASON=""; TC_RAW=""
   TC_RAW="$RESP"
