@@ -16,14 +16,23 @@ REASONING_EFFORT="max"
 MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=128000
 
-QUESTION="{{QUESTION}}"
+QUESTION="$(cat <<'QEOF'
+{{QUESTION}}
+QEOF
+)"
 case "$QUESTION" in
-  "{{"*) QUESTION="你好" ;;
+"{{QUES""TION}}") QUESTION="你好" ;;
 esac
-API_KEY="{{API_KEY}}"
-MODEL="{{MODEL}}"
+API_KEY="$(cat <<'KEOF'
+{{API_KEY}}
+KEOF
+)"
+MODEL="$(cat <<'MEOF'
+{{MODEL}}
+MEOF
+)"
 case "$MODEL" in
-  ""|"{{"*) MODEL="$MODEL_DEFAULT" ;;
+""|"{{MO""DEL}}") MODEL="$MODEL_DEFAULT" ;;
 esac
 
 CURL=$(command -v curl 2>/dev/null || echo /data/data/com.termux/files/usr/bin/curl)
@@ -161,7 +170,7 @@ exec_captured() {
 
 run_cmd() {
   c=$(print -r -- "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-  [ -z "$c" ] && { echo "[安全] 空命令"; return 1; }
+  [ -z "$c" ] && return 1
   OLDIFS=$IFS
   IFS='
 '
@@ -176,9 +185,9 @@ run_cmd() {
       echo "──────────────────────────────────" >&2
       wait_vol
       case $? in
-        0) echo "[已授权] 用户按了音量上" >&2; exec_captured "$c"; return 0 ;;
-        1) echo "[已拒绝] 用户按了音量下" >&2; return 1 ;;
-        2) echo "[已超时] 60秒内未收到按键" >&2; return 1 ;;
+        0) echo "[已授权] " >&2; exec_captured "$c"; return 0 ;;
+        1) echo "[已拒绝] " >&2; return 1 ;;
+        2) echo "[已超时] " >&2; return 1 ;;
       esac
       ;;
     esac
