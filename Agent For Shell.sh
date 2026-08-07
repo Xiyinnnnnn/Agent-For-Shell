@@ -213,7 +213,7 @@ extract_tool_calls() {
   fi
   C=$(print -r -- "$FLAT" | sed -n 's/.*<parameter[^>]*name="command"[^>]*>\([^<]*\)<\/parameter>.*/\1/p' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [ -n "$C" ] && { print -r -- "$C"; return 0; }
-  B=$(print -r -- "$FLAT" | grep -o -E '(run_terminal|terminal|shell|bash|exec|cmd|run|终端|执行|运行|命令)[[:space:]]*\([^)]*\)' | head -n 1)
+  B=$(print -r -- "$FLAT" | grep -io -E '(run_terminal|run-terminal|runterminal|terminal|shell|bash|exec|cmd|run|终端|执行|运行|命令)[[:space:]]*\([^)]*\)' | head -n 1)
   if [ -n "$B" ]; then
     B2=$(print -r -- "$B" | sed 's/^[^()]*([[:space:]]*//; s/)[[:space:]]*$//')
     C=$(print -r -- "$B2" | sed -n 's/.*command[[:space:]]*[:=][[:space:]]*\(["'"'"'][^"'"'"']*["'"'"']\).*/\1/p' | head -n 1 | sed 's/^["'"'"']//; s/["'"'"']$//')
@@ -222,7 +222,7 @@ extract_tool_calls() {
   fi
   C=$(print -r -- "$FLAT" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed 's/^"command"[[:space:]]*:[[:space:]]*"//; s/"$//')
   [ -n "$C" ] && { print -r -- "$C"; return 0; }
-  C=$(print -r -- "$FLAT" | grep -o -E '(run_terminal|terminal|shell|bash|exec|cmd|run|终端|执行|运行|命令)[[:space:]]*[:：][[:space:]]*[^"'"'"'`<（），。；;、]+' | head -n 1 | sed 's/^[^:：]*[:：][[:space:]]*//')
+  C=$(print -r -- "$FLAT" | grep -io -E '(run_terminal|run-terminal|runterminal|terminal|shell|bash|exec|cmd|run|终端|执行|运行|命令)[[:space:]]*[:：][[:space:]]*[^"'"'"'`<（），。；;、]+' | head -n 1 | sed 's/^[^:：]*[:：][[:space:]]*//')
   [ -n "$C" ] && { print -r -- "$C"; return 0; }
   return 1
 }
@@ -323,7 +323,7 @@ compress_summary() {
 }
 
 SYS='[ROLE] Agent For Shell | [LANG] zh-CN
-[MUST] 工具先于语言：思考→run_terminal→执行→验证
+[MUST] 工具先于语言：思考→RUN→执行→验证
 [MUST] 产出写文件；简单问答直接回复
 [MUST] 查优于猜：记忆→命令探查→推理，不跳过
 [MUST_NOT] 草稿当交付；未完成→继续调工具
@@ -335,20 +335,20 @@ SYS='[ROLE] Agent For Shell | [LANG] zh-CN
   必须时→明确告知命令+影响→请求授权→同意后 dangerous=true 执行
 
 [BOOT] 新对话开始，不跳过：
-  ① run_terminal: ls /data/local/tmp/agent_mem/*.md → 按文件名摘要选相关记忆→cat 精读复用 | 无→标"无历史"
+  ① RUN: ls /data/local/tmp/agent_mem/*.md → 按文件名摘要选相关记忆→cat 精读复用 | 无→标"无历史"
   ② 明确任务目标与执行计划
   ③ 进入 [THINK]
 
 [MEMORY_LOOP] 前查后存，漏→不交付（记忆目录读写权在 agent，程序层零落盘不干预）：
-  前·· 需要历史→run_terminal: ls /data/local/tmp/agent_mem/*.md → 按文件名摘要识别相关记忆 → cat 精读 → 命中复用 | 无→标"无历史"
-  后·· 有价值结论→run_terminal: 写记忆文件 /data/local/tmp/agent_mem/摘要名.md
+  前·· 需要历史→RUN: ls /data/local/tmp/agent_mem/*.md → 按文件名摘要识别相关记忆 → cat 精读 → 命中复用 | 无→标"无历史"
+  后·· 有价值结论→RUN: 写记忆文件 /data/local/tmp/agent_mem/摘要名.md
 
 [THINK] 推理协议 P1-P5全执行（<think>内，绝不进<answer>）：
   P1 拆解：核心需求+隐含需求 → 明确目标
-  P2 回记忆：run_terminal: ls 记忆目录/*.md 按文件名摘要选相关 → cat 精读 → 命中复用+标源 | 无→命令探查→不编造
+  P2 回记忆：RUN: ls 记忆目录/*.md 按文件名摘要选相关 → cat 精读 → 命中复用+标源 | 无→命令探查→不编造
   P3 规划：步骤表(步骤→命令→预期→验证)
-  P4 执行：逐步 run_terminal，失败→读报错→修正重试
-  P5 存忆：完成→run_terminal: 写 记忆目录/摘要名.md
+  P4 执行：逐步 RUN，失败→读报错→修正重试
+  P5 存忆：完成→RUN: 写 记忆目录/摘要名.md
 
 <EXAMPLE>
 用户: {需求}
@@ -356,7 +356,7 @@ SYS='[ROLE] Agent For Shell | [LANG] zh-CN
 P1 拆解: {目标}
 P2 回记忆: ls 记忆目录/*.md 按文件名摘要选相关 → {命中|无历史}
 P3 规划: {步骤→命令→验证}
-P4 执行: run_terminal {命令} → {结果}
+P4 执行: RUN {命令} → {结果}
 P5 存忆: 写 记忆目录/摘要名.md
 </think>
 <answer>{结果总结}</answer>
@@ -369,7 +369,7 @@ P5 存忆: 写 记忆目录/摘要名.md
   参数写死在脚本顶部，要改→告诉用户修改'
 
 
-TOOLS='[{"type":"function","function":{"name":"run_terminal","description":"在终端执行 shell 命令并返回输出。唯一工具，别名 terminal/shell/exec/cmd/终端/执行，一切系统操作都通过它完成","parameters":{"type":"object","properties":{"command":{"type":"string","description":"要执行的命令"},"explain":{"type":"string","description":"为什么执行这条命令"},"dangerous":{"type":"boolean","description":"是否涉及删除/覆盖/安装/系统级修改，是则true"}},"required":["command","explain","dangerous"]}}}]'
+TOOLS='[{"type":"function","function":{"name":"RUN","description":"在终端执行 shell 命令并返回输出，一切系统操作都通过它完成","parameters":{"type":"object","properties":{"command":{"type":"string","description":"要执行的命令"},"explain":{"type":"string","description":"为什么执行这条命令"},"dangerous":{"type":"boolean","description":"是否涉及删除/覆盖/安装/系统级修改，是则true"}},"required":["command","explain","dangerous"]}}}]'
 
 MSGS="{\"role\":\"system\",\"content\":\"$(esc "$SYS")\"}"
 MSGS="$MSGS,{\"role\":\"user\",\"content\":\"$(esc "$QUESTION")\"}"
@@ -398,7 +398,7 @@ while :; do
         TC_BNAME=$(json_val "$TC_B" name)
         TC_BARGS=$(json_val "$TC_B" arguments)
         [ -n "$TC_BARGS" ] && TC_BARGS=$(dec "$TC_BARGS")
-        [ -z "$TC_BNAME" ] && TC_BNAME="run_terminal"
+        [ -z "$TC_BNAME" ] && TC_BNAME="RUN"
         if [ -n "$TC_BARGS" ]; then ARGS_JSON="\"$(esc "$TC_BARGS")\""; else ARGS_JSON='""'; fi
         TCS_JSON="$TCS_JSON,{\"id\":\"$TC_BID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_BNAME\",\"arguments\":$ARGS_JSON}}"
         TC_COUNT=$((TC_COUNT + 1))
