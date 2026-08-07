@@ -26,10 +26,11 @@ DeepSeek 驱动的终端 agent · 跑在  幻•实验室终端
 - **批量调用** — 一次响应可发多条 `tool_calls`（建议 ≤8 条），脚本按序执行、逐条回填结果，不用等上一条返回
 - **工具闭环** — 标准 `tool_calls` 批量捕获 + 正文内嵌调用双通道；解析失败自动回灌原文，引导模型自纠，不空转
 - **物理按键授权** — 黑名单命令需物理按键确认：音量上=同意 / 音量下=拒绝 / 60s 无操作自动拒绝
-- **零依赖** — 纯 POSIX sh，仅 `curl` `awk` `sed` `grep`，无 Python / 无 Node / 无第三方库 / 可自行部署静态包环境
+- **零依赖** — 纯 POSIX sh，仅 `curl` `awk` `sed` `grep`，无 Python / 无 Node / 无第三方库 
 - **上下文压缩** — token 超限自动 summarize 历史为摘要，长会话不断链
 - **记忆系统** — 自动读写 `/data/local/tmp/agent_mem/YYYYMMDD.md`，跨会话复用结论
 - **默认继承 adb 权限** — 直接跑 `dumpsys` / `getprop` / `settings` / `pm` / `am` 等系统命令
+- **自行优化** — 可授权agent自动装载静态包环境 `jq` `Python` `requests` `rg` `patchelf`
 
 ## 权限模型
 
