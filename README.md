@@ -30,7 +30,7 @@ DeepSeek 驱动的终端 agent · 跑在  幻•实验室终端
 - **上下文压缩** — token 超限自动 summarize 历史为摘要，长会话不断链
 - **记忆系统** — 自动读写 `/data/local/tmp/agent_mem/YYYYMMDD.md`，跨会话复用结论
 - **默认继承 adb 权限** — 直接跑 `dumpsys` / `getprop` / `settings` / `pm` / `am` 等系统命令
-- **自行优化** — 可授权agent自动装载静态包环境 `busybox` `jq` `Python` `requests` `rg` `patchelf`
+- **自行优化** — 可授权agent自主装载静态包环境 `busybox` `jq` `Python` `requests` `rg` `patchelf`
 
 ## 权限模型
 
