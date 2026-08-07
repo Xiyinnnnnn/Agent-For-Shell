@@ -15,7 +15,7 @@ AUTH_TIMEOUT=60
 REASONING_EFFORT="max"
 MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=128000
-MAX_LINE_LEN=120
+MAX_LINE_LEN=100
 
 QUESTION="$(cat <<'QEOF'
 {{QUESTION}}
@@ -229,22 +229,20 @@ extract_tool_calls() {
 ask_llm() {
 i=0
 while :; do
-ST=/data/local/tmp/agent_sse_state_$$.txt
-: > "$ST"
 print -r -- "$1" | "$CURL" -sS -N --max-time 300 "$API_URL" \
 -H "Authorization: Bearer $API_KEY" \
 -H "Content-Type: application/json" \
--d @- 2>/dev/null | {
+-d @- 2>/dev/null |&
 ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0
     BUF=""; RBUF=""
     NL='
 '
-while IFS= read -r LINE; do
+while IFS= read -r -p LINE; do
 case "$LINE" in
 data:*)
 D=$(print -r -- "$LINE" | sed 's/^data:[[:space:]]*//')
 case "$D" in
-*"[DONE]"*) break ;;
+*"[DONE]"*) kill $! 2>/dev/null; break ;;
 esac
 C=$(json_val "$D" content)
 if [ -n "$C" ]; then
@@ -299,28 +297,6 @@ done
     [ -n "$BUF" ] && printf '%s\n' "$BUF"
     [ -n "$RBUF" ] && printf '%s\n' "$RBUF"
 printf '\n'
-print -r -- "ACCUM=$ACCUM" > "$ST"
-print -r -- "REASON=$REASON" >> "$ST"
-print -r -- "TC_ARGS=$TC_ARGS" >> "$ST"
-print -r -- "TC_ID=$TC_ID" >> "$ST"
-print -r -- "TC_NAME=$TC_NAME" >> "$ST"
-print -r -- "TOTAL_USAGE=$TOTAL_USAGE" >> "$ST"
-}
-ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0
-    BUF=""; RBUF=""
-    NL='
-'
-while IFS= read -r SL; do
-case "$SL" in
-ACCUM=*) ACCUM=${SL#ACCUM=} ;;
-REASON=*) REASON=${SL#REASON=} ;;
-TC_ARGS=*) TC_ARGS=${SL#TC_ARGS=} ;;
-TC_ID=*) TC_ID=${SL#TC_ID=} ;;
-TC_NAME=*) TC_NAME=${SL#TC_NAME=} ;;
-TOTAL_USAGE=*) TOTAL_USAGE=${SL#TOTAL_USAGE=} ;;
-esac
-done < "$ST"
-rm -f "$ST"
 [ -n "$ACCUM$REASON$TC_ID$TC_ARGS" ] && break
 i=$((i + 1))
 [ "$i" -ge 10 ] && break
