@@ -15,6 +15,7 @@ AUTH_TIMEOUT=60
 REASONING_EFFORT="max"
 MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=128000
+MAX_LINE_LEN=120
 
 QUESTION="$(cat <<'QEOF'
 {{QUESTION}}
@@ -226,40 +227,110 @@ extract_tool_calls() {
 }
 
 ask_llm() {
-  i=0
-  while :; do
-  RESP=$(print -r -- "$1" | "$CURL" -sS --max-time 300 "$API_URL" \
-    -H "Authorization: Bearer $API_KEY" \
-    -H "Content-Type: application/json" \
-    -d @- 2>/dev/null)
-    [ -n "$RESP" ] && break
-    i=$((i + 1))
-    [ "$i" -ge 10 ] && break
-    sleep 0.1
-  done
-  ACCUM=""; TC_ARGS=""; TC_ID=""; TOTAL_USAGE=0; REASON=""; TC_RAW=""
-  TC_RAW="$RESP"
-  C=$(json_val "$RESP" content)
-  [ -n "$C" ] && C=$(dec "$C")
-  TCA=$(json_val "$RESP" arguments)
-  TCID=$(print -r -- "$RESP" | sed -n 's/.*"tool_calls":[[:space:]]*\[[[:space:]]*{"id":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
-  U=$(json_val "$RESP" total_tokens)
-  R=$(json_val "$RESP" reasoning_content)
-  [ -n "$R" ] && R=$(dec "$R")
-  [ -n "$C" ] && ACCUM="$C"
-  [ -n "$TCA" ] && TC_ARGS="$TCA"
-  [ -n "$TCID" ] && TC_ID="$TCID"
-  [ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
-  [ -n "$R" ] && REASON="$R"
-  if [ -n "$ACCUM" ]; then
-    echo "[正文]:"
-    echo "$ACCUM"
-  fi
-  if [ -n "$REASON" ]; then
-    echo "[思维链]:"
-    echo "$REASON"
-  fi
-  [ -z "$ACCUM" ] && ACCUM="(无输出)"
+i=0
+while :; do
+ST=/data/local/tmp/agent_sse_state_$$.txt
+: > "$ST"
+print -r -- "$1" | "$CURL" -sS -N --max-time 300 "$API_URL" \
+-H "Authorization: Bearer $API_KEY" \
+-H "Content-Type: application/json" \
+-d @- 2>/dev/null | {
+ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0
+    BUF=""; RBUF=""
+    NL='
+'
+while IFS= read -r LINE; do
+case "$LINE" in
+data:*)
+D=$(print -r -- "$LINE" | sed 's/^data:[[:space:]]*//')
+case "$D" in
+*"[DONE]"*) break ;;
+esac
+C=$(json_val "$D" content)
+if [ -n "$C" ]; then
+if [ -z "$ACCUM" ]; then echo; echo "[正文]:"; fi
+ACCUM="$ACCUM$C"
+    BUF="$BUF$(dec "$C")"
+    while :; do
+      case "$BUF" in
+        *"$NL"*) printf '%s\n' "${BUF%%"$NL"*}"; BUF="${BUF#*"$NL"}" ;;
+        *) break ;;
+      esac
+    done
+    [ "${#BUF}" -gt "$MAX_LINE_LEN" ] && { printf '%s\n' "$BUF"; BUF=""; }
+fi
+R=$(json_val "$D" reasoning_content)
+if [ -n "$R" ]; then
+if [ -z "$REASON" ]; then echo; echo "[思维链]:"; fi
+REASON="$REASON$R"
+    RBUF="$RBUF$(dec "$R")"
+    while :; do
+      case "$RBUF" in
+        *"$NL"*) printf '%s\n' "${RBUF%%"$NL"*}"; RBUF="${RBUF#*"$NL"}" ;;
+        *) break ;;
+      esac
+    done
+    [ "${#RBUF}" -gt "$MAX_LINE_LEN" ] && { printf '%s\n' "$RBUF"; RBUF=""; }
+fi
+TC_PART=$(print -r -- "$D" | awk '{
+p = index($0, "\"arguments\":\"")
+if (p > 0) {
+s = substr($0, p + 13)
+out = ""; i = 1
+while (i <= length(s)) {
+c = substr(s, i, 1)
+if (c == "\\") { out = out substr(s, i, 2); i = i + 2; continue }
+if (c == "\"") break
+out = out c; i = i + 1
+}
+print out
+}
+}')
+[ -n "$TC_PART" ] && TC_ARGS="$TC_ARGS$TC_PART"
+TC_NID=$(print -r -- "$D" | sed -n 's/.*"tool_calls":[[:space:]]*\[[[:space:]]*{"index":[[:space:]]*[0-9]*,[[:space:]]*"id":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+[ -n "$TC_NID" ] && [ -z "$TC_ID" ] && TC_ID="$TC_NID"
+TC_NNAME=$(print -r -- "$D" | sed -n 's/.*"function":{"name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+[ -n "$TC_NNAME" ] && [ -z "$TC_NAME" ] && TC_NAME="$TC_NNAME"
+U=$(print -r -- "$D" | grep -o '"total_tokens":[0-9]*' | head -n 1 | sed 's/.*://')
+[ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
+;;
+esac
+done
+    [ -n "$BUF" ] && printf '%s\n' "$BUF"
+    [ -n "$RBUF" ] && printf '%s\n' "$RBUF"
+printf '\n'
+print -r -- "ACCUM=$ACCUM" > "$ST"
+print -r -- "REASON=$REASON" >> "$ST"
+print -r -- "TC_ARGS=$TC_ARGS" >> "$ST"
+print -r -- "TC_ID=$TC_ID" >> "$ST"
+print -r -- "TC_NAME=$TC_NAME" >> "$ST"
+print -r -- "TOTAL_USAGE=$TOTAL_USAGE" >> "$ST"
+}
+ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0
+    BUF=""; RBUF=""
+    NL='
+'
+while IFS= read -r SL; do
+case "$SL" in
+ACCUM=*) ACCUM=${SL#ACCUM=} ;;
+REASON=*) REASON=${SL#REASON=} ;;
+TC_ARGS=*) TC_ARGS=${SL#TC_ARGS=} ;;
+TC_ID=*) TC_ID=${SL#TC_ID=} ;;
+TC_NAME=*) TC_NAME=${SL#TC_NAME=} ;;
+TOTAL_USAGE=*) TOTAL_USAGE=${SL#TOTAL_USAGE=} ;;
+esac
+done < "$ST"
+rm -f "$ST"
+[ -n "$ACCUM$REASON$TC_ID$TC_ARGS" ] && break
+i=$((i + 1))
+[ "$i" -ge 10 ] && break
+sleep 0.1
+done
+if [ -n "$ACCUM" ]; then ACCUM=$(dec "$ACCUM"); else ACCUM="(无输出)"; fi
+[ -n "$REASON" ] && REASON=$(dec "$REASON")
+if [ -n "$TC_ID" ] && [ -n "$TC_ARGS" ]; then
+TC_RAW="{\"tool_calls\":[{\"id\":\"$TC_ID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_NAME\",\"arguments\":\"$TC_ARGS\"}}]}"
+fi
 }
 
 compress_summary() {
@@ -332,7 +403,7 @@ echo "问题 : $QUESTION"
 LAST_CAUGHT=""
 REPEAT=0
 while :; do
-  BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS],\"tools\":$TOOLS,\"tool_choice\":\"auto\",\"reasoning_effort\":\"$REASONING_EFFORT\",\"thinking\":{\"type\":\"enabled\"}}"
+  BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS],\"tools\":$TOOLS,\"tool_choice\":\"auto\",\"reasoning_effort\":\"$REASONING_EFFORT\",\"thinking\":{\"type\":\"enabled\"},\"stream\":true}"
   ask_llm "$BODY"
   if [ "$TOTAL_USAGE" -gt "$MAX_TOK" ] 2>/dev/null; then
     compress_summary
