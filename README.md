@@ -1,11 +1,12 @@
 <div align="center">
 
-# Agent For Shell
+# Agent For Shell (FREE)
 
 **一个 .sh，部署agent。**
 
 DeepSeek 驱动的终端 agent · 跑在  幻•实验室终端
 默认仅支持param参数实现
+>本分支接入Opencode免费模型
 ![platform](https://img.shields.io/badge/platform-Android%20%2F%20adb%20shell-3DDC84?style=flat-square)
 ![shell](https://img.shields.io/badge/shell-POSIX%20sh-4EAA25?style=flat-square)
 ![model](https://img.shields.io/badge/model-DeepSeek-4D6BFE?style=flat-square)
