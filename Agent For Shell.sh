@@ -135,7 +135,7 @@ json_arr_blocks() {
 wait_vol() {
   i=0
   while [ "$i" -lt "$AUTH_TIMEOUT" ]; do
-    ev=$(timeout 1 getevent -lc 1 2>/dev/null)
+    ev=$(timeout 1 getevent -q -lc 1 2>/dev/null)
     case "$ev" in
       *KEY_VOLUMEUP*)   return 0 ;;
       *KEY_VOLUMEDOWN*) return 1 ;;
@@ -176,9 +176,9 @@ run_cmd() {
       echo "──────────────────────────────────" >&2
       wait_vol
       case $? in
-        0) exec_captured "$c"; return 0 ;;
+        0) echo "[已授权] 用户按了音量上" >&2; exec_captured "$c"; return 0 ;;
         1) echo "[已拒绝] 用户按了音量下" >&2; return 1 ;;
-        2) echo "[超时拒绝] 未收到按键" >&2; return 1 ;;
+        2) echo "[已超时] 60秒内未收到按键" >&2; return 1 ;;
       esac
       ;;
     esac
