@@ -10,11 +10,12 @@
 
 API_URL="https://api.deepseek.com/chat/completions"
 MODEL_DEFAULT="deepseek-v4-flash"
-MAX_TOK=900000
-AUTH_TIMEOUT=60
+SUMTOK=900000
+AUTH_TIMEOUT=10
 REASONING_EFFORT="max"
 MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=128000
+MAXTOK=65536
 MAX_LINE_LEN=100
 
 QUESTION="$(cat <<'QEOF'
@@ -310,7 +311,7 @@ fi
 }
 
 compress_summary() {
-  BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS,{\"role\":\"user\",\"content\":\"[总结所有]\"}],\"stream\":false}"
+  BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS,{\"role\":\"user\",\"content\":\"[总结所有]\"}],\"max_tokens\":$MAXTOK,\"stream\":false}"
   RESP=$(print -r -- "$BODY" | "$CURL" -s --max-time 300 "$API_URL" \
     -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d @-)
   NEW=$(json_val "$RESP" content)
@@ -379,9 +380,9 @@ echo "问题 : $QUESTION"
 LAST_CAUGHT=""
 REPEAT=0
 while :; do
-  BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS],\"tools\":$TOOLS,\"tool_choice\":\"auto\",\"reasoning_effort\":\"$REASONING_EFFORT\",\"thinking\":{\"type\":\"enabled\"},\"stream\":true}"
+  BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS],\"tools\":$TOOLS,\"tool_choice\":\"auto\",\"reasoning_effort\":\"$REASONING_EFFORT\",\"thinking\":{\"type\":\"enabled\"},\"max_tokens\":$MAXTOK,\"stream\":true}"
   ask_llm "$BODY"
-  if [ "$TOTAL_USAGE" -gt "$MAX_TOK" ] 2>/dev/null; then
+  if [ "$TOTAL_USAGE" -gt "$SUMTOK" ] 2>/dev/null; then
     compress_summary
   fi
 
