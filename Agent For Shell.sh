@@ -17,7 +17,8 @@ MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=128000
 MAXTOK=65536
 MAX_LINE_LEN=100
-STREAM_MODE="false"
+STREAM_MODE="true"
+SEP=$(printf '\037')
 
 
 case "$STREAM_MODE" in
@@ -238,11 +239,11 @@ ask_llm() {
 if [ "$STREAM_MODE" = "true" ]; then
 i=0; DONE_SEEN=0
 while :; do
-print -r -- "$1" | "$CURL" -sS -N --max-time 300 "$API_URL" \
+print -r -- "$1" | "$CURL" -sS -N --max-time 180 "$API_URL" \
 -H "Authorization: Bearer $API_KEY" \
 -H "Content-Type: application/json" \
 -d @- 2>/dev/null |&
-ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0
+ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0; LAST_D=""
     BUF=""; RBUF=""
     NL='
 '
@@ -253,11 +254,52 @@ D=$(print -r -- "$LINE" | sed 's/^data:[[:space:]]*//')
 case "$D" in
 *"[DONE]"*) DONE_SEEN=1; break ;;
 esac
-C=$(json_val "$D" content)
+LAST_D="$D"
+OUT=$(print -r -- "$D" | awk '
+function dec(s) {
+  gsub(/\\"/, "\"", s)
+  gsub(/\\\\/, "\001", s)
+  gsub(/\\n/, "\n", s)
+  gsub(/\\t/, "\t", s)
+  gsub(/\\r/, "\r", s)
+  gsub(/\001/, "\\", s)
+  return s
+}
+function jstr(t, key,   k, p, s, out, n, i, c) {
+  k = "\"" key "\":\""
+  p = index(t, k)
+  if (p == 0) return ""
+  s = substr(t, p + length(k))
+  out = ""
+  n = length(s)
+  i = 1
+  while (i <= n) {
+    c = substr(s, i, 1)
+    if (c == "\\") { out = out substr(s, i, 2); i = i + 2; continue }
+    if (c == "\"") break
+    out = out c
+    i = i + 1
+  }
+  return out
+}
+{
+  c = jstr($0, "content")
+  r = jstr($0, "reasoning_content")
+  a = jstr($0, "arguments")
+  id = ""
+  p = index($0, "\"id\":\"")
+  if (p > 0) { s = substr($0, p + 6); q = index(s, "\""); if (q > 0) id = substr(s, 1, q - 1) }
+  nm = ""
+  p = index($0, "\"name\":\"")
+  if (p > 0) { s = substr($0, p + 8); q = index(s, "\""); if (q > 0) nm = substr(s, 1, q - 1) }
+  printf "C%s%cc%s%cR%s%cr%s%cA%s%cI%s%cN%s", c, 31, dec(c), 31, r, 31, dec(r), 31, a, 31, id, 31, nm
+}')
+OIFS=$IFS; IFS=$SEP; set -- $OUT; IFS=$OIFS
+C=${1#?}; c=${2#?}; R=${3#?}; r=${4#?}; A=${5#?}; I=${6#?}; N=${7#?}
 if [ -n "$C" ]; then
 if [ -z "$ACCUM" ]; then echo; echo "[正文]:"; fi
 ACCUM="$ACCUM$C"
-    BUF="$BUF$(dec "$C")"
+    BUF="$BUF$c"
     while :; do
       case "$BUF" in
         *"$NL"*) printf '%s\n' "${BUF%%"$NL"*}"; BUF="${BUF#*"$NL"}" ;;
@@ -266,11 +308,10 @@ ACCUM="$ACCUM$C"
     done
     [ "${#BUF}" -gt "$MAX_LINE_LEN" ] && { printf '%s\n' "$BUF"; BUF=""; }
 fi
-R=$(json_val "$D" reasoning_content)
 if [ -n "$R" ]; then
 if [ -z "$REASON" ]; then echo; echo "[思维链]:"; fi
 REASON="$REASON$R"
-    RBUF="$RBUF$(dec "$R")"
+    RBUF="$RBUF$r"
     while :; do
       case "$RBUF" in
         *"$NL"*) printf '%s\n' "${RBUF%%"$NL"*}"; RBUF="${RBUF#*"$NL"}" ;;
@@ -279,27 +320,9 @@ REASON="$REASON$R"
     done
     [ "${#RBUF}" -gt "$MAX_LINE_LEN" ] && { printf '%s\n' "$RBUF"; RBUF=""; }
 fi
-TC_PART=$(print -r -- "$D" | awk '{
-p = index($0, "\"arguments\":\"")
-if (p > 0) {
-s = substr($0, p + 13)
-out = ""; i = 1
-while (i <= length(s)) {
-c = substr(s, i, 1)
-if (c == "\\") { out = out substr(s, i, 2); i = i + 2; continue }
-if (c == "\"") break
-out = out c; i = i + 1
-}
-print out
-}
-}')
-[ -n "$TC_PART" ] && TC_ARGS="$TC_ARGS$TC_PART"
-TC_NID=$(print -r -- "$D" | sed -n 's/.*"tool_calls":[[:space:]]*\[[[:space:]]*{"index":[[:space:]]*[0-9]*,[[:space:]]*"id":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
-[ -n "$TC_NID" ] && [ -z "$TC_ID" ] && TC_ID="$TC_NID"
-TC_NNAME=$(print -r -- "$D" | sed -n 's/.*"function":{"name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
-[ -n "$TC_NNAME" ] && [ -z "$TC_NAME" ] && TC_NAME="$TC_NNAME"
-U=$(print -r -- "$D" | grep -o '"total_tokens":[0-9]*' | head -n 1 | sed 's/.*://')
-[ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
+[ -n "$A" ] && TC_ARGS="$TC_ARGS$A"
+[ -n "$I" ] && [ -z "$TC_ID" ] && TC_ID="$I"
+[ -n "$N" ] && [ -z "$TC_NAME" ] && TC_NAME="$N"
 ;;
 esac
 done
@@ -307,6 +330,8 @@ pkill -P $! 2>/dev/null; kill $! 2>/dev/null
     [ -n "$BUF" ] && printf '%s\n' "$BUF"
     [ -n "$RBUF" ] && printf '%s\n' "$RBUF"
 printf '\n'
+U=$(print -r -- "$LAST_D" | grep -o '"total_tokens":[0-9]*' | head -n 1 | sed 's/.*://')
+[ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
 [ "$DONE_SEEN" = 1 ] && break
 i=$((i + 1))
 [ "$i" -ge 10 ] && break
