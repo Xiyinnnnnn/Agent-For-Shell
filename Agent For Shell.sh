@@ -17,6 +17,11 @@ MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=128000
 MAXTOK=65536
 MAX_LINE_LEN=100
+STREAM_MODE="false"
+case "$STREAM_MODE" in
+true|false) ;;
+*) STREAM_MODE="false" ;;
+esac
 
 QUESTION="$(cat <<'QEOF'
 {{QUESTION}}
@@ -228,6 +233,7 @@ extract_tool_calls() {
 }
 
 ask_llm() {
+if [ "$STREAM_MODE" = "true" ]; then
 i=0
 while :; do
 print -r -- "$1" | "$CURL" -sS -N --max-time 300 "$API_URL" \
@@ -308,6 +314,51 @@ if [ -n "$ACCUM" ]; then ACCUM=$(dec "$ACCUM"); else ACCUM="(无输出)"; fi
 if [ -n "$TC_ID" ] && [ -n "$TC_ARGS" ]; then
 TC_RAW="{\"tool_calls\":[{\"id\":\"$TC_ID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_NAME\",\"arguments\":\"$TC_ARGS\"}}]}"
 fi
+fi
+
+# ===== 非流式路径: stream=false, 整包返回一次解析(省CPU,安卓toybox推荐) =====
+RESP=$(print -r -- "$1" | "$CURL" -s --max-time 300 "$API_URL" \
+-H "Authorization: Bearer $API_KEY" \
+-H "Content-Type: application/json" \
+-d @- 2>/dev/null)
+RESP=$(print -r -- "$RESP" | tr -d '\n')
+ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0; TC_RAW=""
+[ -z "$RESP" ] && { ACCUM="(无输出)"; return 0; }
+C=$(json_val "$RESP" content)
+if [ -n "$C" ]; then
+echo; echo "[正文]:"
+dec "$C"
+ACCUM="$C"
+fi
+R=$(json_val "$RESP" reasoning_content)
+if [ -n "$R" ]; then
+echo; echo "[思维链]:"
+dec "$R"
+REASON="$R"
+fi
+printf '\n'
+U=$(print -r -- "$RESP" | grep -o '"total_tokens":[0-9]*' | head -n 1 | sed 's/.*://')
+[ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
+TCB_TMP=/data/local/tmp/agent_ntc_$$.txt
+json_arr_blocks "$RESP" tool_calls > "$TCB_TMP"
+TC_RAW=""; FIRST_TC=1
+while IFS= read -r TC_B; do
+[ -z "$TC_B" ] && continue
+TC_BID=$(json_val "$TC_B" id)
+TC_BNAME=$(json_val "$TC_B" name)
+TC_BARGS=$(json_val "$TC_B" arguments)
+[ -z "$TC_BARGS" ] && TC_BARGS=""
+if [ "$FIRST_TC" = 1 ]; then
+TC_RAW="{\"tool_calls\":[{\"id\":\"$TC_BID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_BNAME\",\"arguments\":\"$TC_BARGS\"}}"
+FIRST_TC=0
+else
+TC_RAW="$TC_RAW,{\"id\":\"$TC_BID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_BNAME\",\"arguments\":\"$TC_BARGS\"}}"
+fi
+done < "$TCB_TMP"
+rm -f "$TCB_TMP"
+[ "$FIRST_TC" = 0 ] && TC_RAW="$TC_RAW]}"
+if [ -n "$ACCUM" ]; then ACCUM=$(dec "$ACCUM"); else ACCUM="(无输出)"; fi
+[ -n "$REASON" ] && REASON=$(dec "$REASON")
 }
 
 compress_summary() {
@@ -336,36 +387,41 @@ SYS='[ROLE] Agent For Shell | [LANG] zh-CN
 
 [BOOT] 新对话开始，不跳过：
   ① RUN: ls /data/local/tmp/agent_mem/*.md → 按文件名摘要选相关记忆→cat 精读复用 | 无→标"无历史"
-  ② 明确任务目标与执行计划
-  ③ 进入 [THINK]
+  ② RUN: ls /data/local/tmp/agent_skill/*.md → 按文件名摘要选相关技能→cat 精读复用 | 无→标"无技能"
+  ③ 明确任务目标与执行计划
+  ④ 进入 [THINK]
 
-[MEMORY_LOOP] 前查后存，漏→不交付（记忆目录读写权在 agent，程序层零落盘不干预）：
+[MEMORY_LOOP] 前查后存，漏→不交付：
   前·· 需要历史→RUN: ls /data/local/tmp/agent_mem/*.md → 按文件名摘要识别相关记忆 → cat 精读 → 命中复用 | 无→标"无历史"
   后·· 有价值结论→RUN: 写记忆文件 /data/local/tmp/agent_mem/摘要名.md
 
+[SKILL_LOOP] 前查后存，漏→不交付：
+  前·· 需要技能→RUN: ls /data/local/tmp/agent_skill/*.md → 按文件名摘要识别相关技能 → cat 精读 → 命中复用 | 无→标"无技能"
+  后·· 有可复用结论/脚本→RUN: 写技能总结 /data/local/tmp/agent_skill/摘要名.md；可复用脚本存 /data/local/tmp/agent_skill/脚本名.sh
+
 [THINK] 推理协议 P1-P5全执行（<think>内，绝不进<answer>）：
   P1 拆解：核心需求+隐含需求 → 明确目标
-  P2 回记忆：RUN: ls 记忆目录/*.md 按文件名摘要选相关 → cat 精读 → 命中复用+标源 | 无→命令探查→不编造
+  P2 回记忆+查技能：RUN: ls 记忆目录/*.md 按文件名摘要选相关 → cat 精读 → 命中复用+标源 | 无→命令探查→不编造；再 RUN: ls /data/local/tmp/agent_skill/*.md 按文件名选相关技能 → cat 精读 → 命中复用 | 无→标"无技能"
   P3 规划：步骤表(步骤→命令→预期→验证)
   P4 执行：逐步 RUN，失败→读报错→修正重试
-  P5 存忆：完成→RUN: 写 记忆目录/摘要名.md
+  P5 存忆存技：完成→RUN: 写 记忆目录/摘要名.md；有可复用结论/脚本→RUN: 写 技能目录/摘要名.md 及脚本
 
 <EXAMPLE>
 用户: {需求}
 <think>
 P1 拆解: {目标}
-P2 回记忆: ls 记忆目录/*.md 按文件名摘要选相关 → {命中|无历史}
+P2 回记忆+查技能: ls 记忆目录/*.md 按文件名摘要选相关 → {命中|无历史}；ls /data/local/tmp/agent_skill/*.md → {命中|无技能}
 P3 规划: {步骤→命令→验证}
 P4 执行: RUN {命令} → {结果}
-P5 存忆: 写 记忆目录/摘要名.md
+P5 存忆存技: 写 记忆目录/摘要名.md；有可复用→写 技能目录/摘要名.md
 </think>
 <answer>{结果总结}</answer>
 </EXAMPLE>
 
 [SUMMARY] 收到"[总结所有]"→ 不调工具，总结全部历史，输出纯摘要正文
 
-[DELIVER] 核对：□记忆已回 □任务完成 □输出已验证 □问题已回答
-<RULES> P1-P5不进answer；记忆必查必存；危险先授权；
+[DELIVER] 核对：□记忆已回 □技能已查 □任务完成 □输出已验证 □问题已回答 □技能已存
+<RULES> P1-P5不进answer；记忆必查必存；技能必查必存；危险先授权；
   参数写死在脚本顶部，要改→告诉用户修改'
 
 
@@ -380,7 +436,7 @@ echo "问题 : $QUESTION"
 LAST_CAUGHT=""
 REPEAT=0
 while :; do
-  BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS],\"tools\":$TOOLS,\"tool_choice\":\"auto\",\"reasoning_effort\":\"$REASONING_EFFORT\",\"thinking\":{\"type\":\"enabled\"},\"max_tokens\":$MAXTOK,\"stream\":true}"
+  BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS],\"tools\":$TOOLS,\"tool_choice\":\"auto\",\"reasoning_effort\":\"$REASONING_EFFORT\",\"thinking\":{\"type\":\"enabled\"},\"max_tokens\":$MAXTOK,\"stream\":$STREAM_MODE}"
   ask_llm "$BODY"
   if [ "$TOTAL_USAGE" -gt "$SUMTOK" ] 2>/dev/null; then
     compress_summary
