@@ -18,6 +18,8 @@ MAX_BATCH_OUT=128000
 MAXTOK=65536
 MAX_LINE_LEN=100
 STREAM_MODE="false"
+
+
 case "$STREAM_MODE" in
 true|false) ;;
 *) STREAM_MODE="false" ;;
@@ -397,7 +399,7 @@ SYS='[ROLE] Agent For Shell | [LANG] zh-CN
 
 [SKILL_LOOP] 前查后存，漏→不交付：
   前·· 需要技能→RUN: ls /data/local/tmp/agent_skill/*.md → 按文件名摘要识别相关技能 → cat 精读 → 命中复用 | 无→标"无技能"
-  后·· 有可复用结论/脚本→RUN: 写技能总结 /data/local/tmp/agent_skill/摘要名.md；可复用脚本存 /data/local/tmp/agent_skill/脚本名.sh
+  后·· 可复用脚本→RUN: 写技能总结 /data/local/tmp/agent_skill/摘要名.md；可复用脚本存 /data/local/tmp/agent_skill/脚本名.sh
 
 [THINK] 推理协议 P1-P5全执行（<think>内，绝不进<answer>）：
   P1 拆解：核心需求+隐含需求 → 明确目标
@@ -413,7 +415,7 @@ P1 拆解: {目标}
 P2 回记忆+查技能: ls 记忆目录/*.md 按文件名摘要选相关 → {命中|无历史}；ls /data/local/tmp/agent_skill/*.md → {命中|无技能}
 P3 规划: {步骤→命令→验证}
 P4 执行: RUN {命令} → {结果}
-P5 存忆存技: 写 记忆目录/摘要名.md；有可复用→写 技能目录/摘要名.md
+P5 存忆存技: 写 记忆目录/摘要名.md；经验→写 技能目录/摘要名.md
 </think>
 <answer>{结果总结}</answer>
 </EXAMPLE>
