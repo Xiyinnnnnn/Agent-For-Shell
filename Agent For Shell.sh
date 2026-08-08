@@ -316,7 +316,7 @@ TC_RAW="{\"tool_calls\":[{\"id\":\"$TC_ID\",\"type\":\"function\",\"function\":{
 fi
 fi
 
-# ===== 非流式路径: stream=false, 整包返回一次解析(省CPU,安卓toybox推荐) =====
+
 RESP=$(print -r -- "$1" | "$CURL" -s --max-time 300 "$API_URL" \
 -H "Authorization: Bearer $API_KEY" \
 -H "Content-Type: application/json" \
