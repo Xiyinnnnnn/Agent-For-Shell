@@ -250,12 +250,7 @@ ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0; LAST_D=""
 while IFS= read -r -p LINE; do
 case "$LINE" in
 data:*)
-D=$(print -r -- "$LINE" | sed 's/^data:[[:space:]]*//')
-case "$D" in
-*"[DONE]"*) DONE_SEEN=1; break ;;
-esac
-LAST_D="$D"
-OUT=$(print -r -- "$D" | awk '
+OUT=$(print -r -- "$LINE" | awk '
 function dec(s) {
   gsub(/\\"/, "\"", s)
   gsub(/\\\\/, "\001", s)
@@ -283,6 +278,8 @@ function jstr(t, key,   k, p, s, out, n, i, c) {
   return out
 }
 {
+  if (sub(/^data:[[:space:]]*/, "", $0) == 0) next
+  if ($0 ~ /\[DONE\]/) { print "DONE"; exit }
   c = jstr($0, "content")
   r = jstr($0, "reasoning_content")
   a = jstr($0, "arguments")
@@ -292,10 +289,23 @@ function jstr(t, key,   k, p, s, out, n, i, c) {
   nm = ""
   p = index($0, "\"name\":\"")
   if (p > 0) { s = substr($0, p + 8); q = index(s, "\""); if (q > 0) nm = substr(s, 1, q - 1) }
-  printf "C%s%cc%s%cR%s%cr%s%cA%s%cI%s%cN%s", c, 31, dec(c), 31, r, 31, dec(r), 31, a, 31, id, 31, nm
+  u = ""
+  p = index($0, "\"total_tokens\":")
+  if (p > 0) {
+    s = substr($0, p + 15)
+    n = length(s); j = 1
+    while (j <= n && substr(s, j, 1) ~ /[0-9]/) j++
+    u = substr(s, 1, j - 1)
+  }
+  printf "C%s%cc%s%cR%s%cr%s%cA%s%cI%s%cN%s%cU%s", c, 31, dec(c), 31, r, 31, dec(r), 31, a, 31, id, 31, nm, 31, u
 }')
+case "$OUT" in
+DONE) DONE_SEEN=1; break ;;
+esac
 OIFS=$IFS; IFS=$SEP; set -- $OUT; IFS=$OIFS
 C=${1#?}; c=${2#?}; R=${3#?}; r=${4#?}; A=${5#?}; I=${6#?}; N=${7#?}
+U=${8#?}
+[ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
 if [ -n "$C" ]; then
 if [ -z "$ACCUM" ]; then echo; echo "[正文]:"; fi
 ACCUM="$ACCUM$C"
@@ -330,8 +340,6 @@ pkill -P $! 2>/dev/null; kill $! 2>/dev/null
     [ -n "$BUF" ] && printf '%s\n' "$BUF"
     [ -n "$RBUF" ] && printf '%s\n' "$RBUF"
 printf '\n'
-U=$(print -r -- "$LAST_D" | grep -o '"total_tokens":[0-9]*' | head -n 1 | sed 's/.*://')
-[ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
 [ "$DONE_SEEN" = 1 ] && break
 i=$((i + 1))
 [ "$i" -ge 10 ] && break
