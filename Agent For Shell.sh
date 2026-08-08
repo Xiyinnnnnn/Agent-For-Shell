@@ -236,7 +236,7 @@ extract_tool_calls() {
 
 ask_llm() {
 if [ "$STREAM_MODE" = "true" ]; then
-i=0
+i=0; DONE_SEEN=0
 while :; do
 print -r -- "$1" | "$CURL" -sS -N --max-time 300 "$API_URL" \
 -H "Authorization: Bearer $API_KEY" \
@@ -251,7 +251,7 @@ case "$LINE" in
 data:*)
 D=$(print -r -- "$LINE" | sed 's/^data:[[:space:]]*//')
 case "$D" in
-*"[DONE]"*) kill $! 2>/dev/null; break ;;
+*"[DONE]"*) DONE_SEEN=1; break ;;
 esac
 C=$(json_val "$D" content)
 if [ -n "$C" ]; then
@@ -303,19 +303,22 @@ U=$(print -r -- "$D" | grep -o '"total_tokens":[0-9]*' | head -n 1 | sed 's/.*:/
 ;;
 esac
 done
+pkill -P $! 2>/dev/null; kill $! 2>/dev/null
     [ -n "$BUF" ] && printf '%s\n' "$BUF"
     [ -n "$RBUF" ] && printf '%s\n' "$RBUF"
 printf '\n'
-[ -n "$ACCUM$REASON$TC_ID$TC_ARGS" ] && break
+[ "$DONE_SEEN" = 1 ] && break
 i=$((i + 1))
 [ "$i" -ge 10 ] && break
 sleep 0.1
 done
+[ "$DONE_SEEN" = 0 ] && { ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; }
 if [ -n "$ACCUM" ]; then ACCUM=$(dec "$ACCUM"); else ACCUM="(无输出)"; fi
 [ -n "$REASON" ] && REASON=$(dec "$REASON")
 if [ -n "$TC_ID" ] && [ -n "$TC_ARGS" ]; then
 TC_RAW="{\"tool_calls\":[{\"id\":\"$TC_ID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_NAME\",\"arguments\":\"$TC_ARGS\"}}]}"
 fi
+return 0
 fi
 
 
