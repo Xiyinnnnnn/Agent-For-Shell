@@ -17,7 +17,7 @@ MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=128000
 MAXTOK=65536
 MAX_LINE_LEN=100
-STREAM_MODE="true"
+STREAM_MODE="false"
 SEP=$(printf '\037')
 
 
@@ -279,7 +279,7 @@ function jstr(t, key,   k, p, s, out, n, i, c) {
 }
 {
   if (sub(/^data:[[:space:]]*/, "", $0) == 0) next
-  if ($0 ~ /\[DONE\]/) { print "DONE"; exit }
+  if ($0 ~ /^\[DONE\][[:space:]]*$/) { print "DONE"; exit }
   c = jstr($0, "content")
   r = jstr($0, "reasoning_content")
   a = jstr($0, "arguments")
