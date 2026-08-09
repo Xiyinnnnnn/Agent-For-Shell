@@ -63,7 +63,7 @@ escj() {
   print -r -- "$1" | tr '\t\r' '  ' | awk '{ gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); out = out $0 "\\n" } END { printf "%s", out }'
 }
 dec() {
-  print -r -- "$1" | sed 's/\\"/"/g' | awk '{ gsub(/\\\\/, "\001"); gsub(/\\n/, "\n"); gsub(/\\t/, "\t"); gsub(/\\r/, "\r"); gsub(/\001/, "\\"); print }'
+  print -r -- "$1" | sed 's/\\"/"/g' | awk '{ gsub(/\\\\/, "\001"); gsub(/\\n/, "\n"); gsub(/\\t/, "\t"); gsub(/\\r/, ""); gsub(/\001/, "\\"); print }'
 }
 json_val() {
   print -r -- "$1" | LC_ALL=C awk -v k="\"$2\":" '
@@ -168,7 +168,7 @@ wait_vol() {
 exec_captured() {
   O_TMP=/data/local/tmp/agent_out_$$.txt
   E_TMP=/data/local/tmp/agent_err_$$.txt
-  eval "$1" > "$O_TMP" 2> "$E_TMP"
+  timeout 120 sh -c "$1" > "$O_TMP" 2> "$E_TMP"
   head -c 12000 "$O_TMP"
   if [ -s "$E_TMP" ]; then
     echo
@@ -188,17 +188,19 @@ run_cmd() {
   for b in $BL; do
     IFS=$OLDIFS
     case " $c " in *" $b "*|"$b "*|"$b."*|"$b:"*|"$b")
+      printf '\033[31m' >&2
       echo "──────────────────────────────────" >&2
       echo "⚠ 危险命令，需要物理按键授权：" >&2
       echo "   命令: $c" >&2
       echo "   [音量上] 同意执行  |  [音量下] 拒绝" >&2
       echo "   ${AUTH_TIMEOUT}秒无操作自动拒绝" >&2
       echo "──────────────────────────────────" >&2
+      printf '\033[0m' >&2
       wait_vol
       case $? in
-        0) echo "[已授权] " >&2; exec_captured "$c"; return 0 ;;
-        1) echo "[已拒绝] " >&2; return 1 ;;
-        2) echo "[已超时] " >&2; return 1 ;;
+        0) printf '\033[31m[已授权]\033[0m ' >&2; exec_captured "$c"; return 0 ;;
+        1) printf '\033[31m[已拒绝]\033[0m ' >&2; return 1 ;;
+        2) printf '\033[31m[已超时]\033[0m ' >&2; return 1 ;;
       esac
       ;;
     esac
@@ -244,11 +246,11 @@ print -r -- "$1" | "$CURL" -sS -N --max-time 180 "$API_URL" \
 -H "Authorization: Bearer $API_KEY" \
 -H "Content-Type: application/json" \
 -d @- 2>/dev/null |&
-ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0; LAST_D=""
+ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0; LAST_D=""; TC_RAW=""; CCNT=0; RCNT=0
     BUF=""; RBUF=""
     NL='
 '
-while IFS= read -r -p LINE; do
+while IFS= read -r -t 300 -p LINE; do
 case "$LINE" in
 data:*)
 OUT=$(print -r -- "$LINE" | awk '
@@ -257,7 +259,7 @@ function dec(s) {
   gsub(/\\\\/, "\001", s)
   gsub(/\\n/, "\n", s)
   gsub(/\\t/, "\t", s)
-  gsub(/\\r/, "\r", s)
+  gsub(/\\r/, "", s)
   gsub(/\001/, "\\", s)
   return s
 }
@@ -299,15 +301,16 @@ function jstr(t, key,   k, p, s, out, n, i, c) {
     u = substr(s, 1, j - 1)
   }
   printf "C%s%cc%s%cR%s%cr%s%cA%s%cI%s%cN%s%cU%s", c, 31, dec(c), 31, r, 31, dec(r), 31, a, 31, id, 31, nm, 31, u
-}')
+}' 2>/dev/null)
 case "$OUT" in
 DONE) DONE_SEEN=1; break ;;
 esac
-OIFS=$IFS; IFS=$SEP; set -- $OUT; IFS=$OIFS
+OIFS=$IFS; IFS=$SEP; set -f; set -- $OUT; set +f; IFS=$OIFS
 C=${1#?}; c=${2#?}; R=${3#?}; r=${4#?}; A=${5#?}; I=${6#?}; N=${7#?}
 U=${8#?}
 [ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
 if [ -n "$C" ]; then
+[ -n "$RBUF" ] && { printf '%s\n' "$RBUF"; RBUF=""; }
 if [ -z "$ACCUM" ]; then echo; echo "[正文]:"; fi
 ACCUM="$ACCUM$C"
     BUF="$BUF$c"
@@ -344,15 +347,15 @@ fi
 esac
 done
 pkill -P $! 2>/dev/null; kill $! 2>/dev/null
+[ -n "$RBUF" ] && printf '%s\n' "$RBUF"
     [ -n "$BUF" ] && printf '%s\n' "$BUF"
-    [ -n "$RBUF" ] && printf '%s\n' "$RBUF"
 printf '\n'
 [ "$DONE_SEEN" = 1 ] && break
 i=$((i + 1))
 [ "$i" -ge 10 ] && break
 sleep 0.1
 done
-[ "$DONE_SEEN" = 0 ] && { ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; }
+[ "$DONE_SEEN" = 0 ] && { ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; BUF=""; RBUF=""; CCNT=0; RCNT=0; TC_RAW=""; return 0; }
 if [ -n "$ACCUM" ]; then ACCUM=$(dec "$ACCUM"); else ACCUM="(无输出)"; fi
 [ -n "$REASON" ] && REASON=$(dec "$REASON")
 if [ -n "$TC_ID" ] && [ -n "$TC_ARGS" ]; then
@@ -513,7 +516,7 @@ while :; do
       if [ "$TC_COUNT" -gt 0 ]; then
         TCS_JSON=$(print -r -- "$TCS_JSON" | sed 's/^,//')
         if [ -n "$ACCUM" ]; then CONTENT_JSON="\"$(esc "$ACCUM")\""; else CONTENT_JSON="null"; fi
-        if [ -n "$REASON" ]; then REASON_JSON="\"$(escj "$REASON")\""; else REASON_JSON="null"; fi
+        if [ -n "$REASON" ]; then REASON_JSON="\"$(escj "$REASON")\""; else REASON_JSON='""'; fi
         MSGS="$MSGS,{\"role\":\"assistant\",\"content\":$CONTENT_JSON,\"reasoning_content\":$REASON_JSON,\"tool_calls\":[$TCS_JSON]}"
         TC_EXEC=0; TOTAL_OUT=0; SKIP=0
         while IFS= read -r TC_B; do
@@ -579,7 +582,7 @@ while :; do
         REPEAT=1
       fi
     fi
-    if [ -n "$REASON" ]; then REASON_JSON="\"$(escj "$REASON")\""; else REASON_JSON="null"; fi
+    if [ -n "$REASON" ]; then REASON_JSON="\"$(escj "$REASON")\""; else REASON_JSON='""'; fi
     MSGS="$MSGS,{\"role\":\"assistant\",\"content\":\"$(esc "$ACCUM")\",\"reasoning_content\":$REASON_JSON}"
     OUT_ALL=""; TOTAL_OUT=0; EXEC_TMP=/data/local/tmp/agent_exec_$$.txt; : > "$EXEC_TMP"
     while IFS= read -r CC; do
