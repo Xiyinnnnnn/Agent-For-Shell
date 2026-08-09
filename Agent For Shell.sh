@@ -195,12 +195,11 @@ run_cmd() {
       echo "   [音量上] 同意执行  |  [音量下] 拒绝" >&2
       echo "   ${AUTH_TIMEOUT}秒无操作自动拒绝" >&2
       echo "──────────────────────────────────" >&2
-      printf '\033[0m' >&2
       wait_vol
       case $? in
-        0) printf '\033[31m[已授权]\033[0m ' >&2; exec_captured "$c"; return 0 ;;
-        1) printf '\033[31m[已拒绝]\033[0m ' >&2; return 1 ;;
-        2) printf '\033[31m[已超时]\033[0m ' >&2; return 1 ;;
+        0) echo "[已授权] " >&2; printf '\033[0m\n' >&2; exec_captured "$c"; return 0 ;;
+        1) echo "[已拒绝] " >&2; printf '\033[0m\n' >&2; return 1 ;;
+        2) echo "[已超时] " >&2; printf '\033[0m\n' >&2; return 1 ;;
       esac
       ;;
     esac
