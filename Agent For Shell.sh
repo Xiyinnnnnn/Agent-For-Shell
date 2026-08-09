@@ -16,8 +16,9 @@ REASONING_EFFORT="max"
 MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=128000
 MAXTOK=65536
-MAX_LINE_LEN=100
-STREAM_MODE="false"
+MAX_CHU=100
+CCNT=0; RCNT=0
+STREAM_MODE="true"
 SEP=$(printf '\037')
 
 
@@ -310,25 +311,31 @@ if [ -n "$C" ]; then
 if [ -z "$ACCUM" ]; then echo; echo "[正文]:"; fi
 ACCUM="$ACCUM$C"
     BUF="$BUF$c"
+    CCNT=$((CCNT + 1))
+    if [ "$CCNT" -ge "$MAX_CHU" ]; then
+      CCNT=0
     while :; do
       case "$BUF" in
         *"$NL"*) printf '%s\n' "${BUF%%"$NL"*}"; BUF="${BUF#*"$NL"}" ;;
         *) break ;;
       esac
     done
-    [ "${#BUF}" -gt "$MAX_LINE_LEN" ] && { printf '%s\n' "$BUF"; BUF=""; }
+    fi
 fi
 if [ -n "$R" ]; then
 if [ -z "$REASON" ]; then echo; echo "[思维链]:"; fi
 REASON="$REASON$R"
     RBUF="$RBUF$r"
+    RCNT=$((RCNT + 1))
+    if [ "$RCNT" -ge "$MAX_CHU" ]; then
+      RCNT=0
     while :; do
       case "$RBUF" in
         *"$NL"*) printf '%s\n' "${RBUF%%"$NL"*}"; RBUF="${RBUF#*"$NL"}" ;;
         *) break ;;
       esac
     done
-    [ "${#RBUF}" -gt "$MAX_LINE_LEN" ] && { printf '%s\n' "$RBUF"; RBUF=""; }
+    fi
 fi
 [ -n "$A" ] && TC_ARGS="$TC_ARGS$A"
 [ -n "$I" ] && [ -z "$TC_ID" ] && TC_ID="$I"
