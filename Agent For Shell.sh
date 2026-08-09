@@ -51,8 +51,10 @@ CURL=$(command -v curl 2>/dev/null || echo /data/data/com.termux/files/usr/bin/c
 BL="rm
 dd
 su
-pm uninstall
-pm clear
+pm-uninstall
+pm-clear
+pm-install
+pm-remove
 chmod -R 777
 :(){"
 
@@ -166,28 +168,27 @@ wait_vol() {
 }
 
 exec_captured() {
-  O_TMP=/data/local/tmp/agent_out_$$.txt
-  E_TMP=/data/local/tmp/agent_err_$$.txt
-  timeout 120 sh -c "$1" > "$O_TMP" 2> "$E_TMP"
-  head -c 12000 "$O_TMP"
-  if [ -s "$E_TMP" ]; then
+  exec 3>&1
+  ERR=$(timeout 120 sh -c "$1" 2>&1 1>&3)
+  exec 3>&-
+  if [ -n "$ERR" ]; then
     echo
     echo "[stderr]"
-    head -c 4000 "$E_TMP"
+    print -r -- "$ERR" | head -c 4000
   fi
-  rm -f "$O_TMP" "$E_TMP"
   return 0
 }
 
 run_cmd() {
   c=$(print -r -- "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [ -z "$c" ] && return 1
+  cc=$(print -r -- "$c" | tr '\n' ' ' | sed 's/[;&|]/ /g; s/[[:space:]][[:space:]]*/ /g; s/pm[[:space:]]*install/pm-install/g; s/pm[[:space:]]*uninstall/pm-uninstall/g; s/pm[[:space:]]*clear/pm-clear/g; s/pm[[:space:]]*remove/pm-remove/g; s#[^ ]*/##g')
   OLDIFS=$IFS
   IFS='
 '
   for b in $BL; do
     IFS=$OLDIFS
-    case " $c " in *" $b "*|"$b "*|"$b."*|"$b:"*|"$b")
+    case " $cc " in *" $b "*|"$b "*|"$b."*|"$b:"*|"$b")
       printf '\033[31m' >&2
       echo "──────────────────────────────────" >&2
       echo "⚠ 危险命令，需要物理按键授权：" >&2
@@ -208,9 +209,7 @@ run_cmd() {
   exec_captured "$c"
 }
 run_ui() {
-  T=/data/local/tmp/agent_ui_$$.txt
-  run_cmd "$1" | tee "$T"
-  rm -f "$T"
+  run_cmd "$1"
 }
 
 
@@ -241,18 +240,15 @@ ask_llm() {
 if [ "$STREAM_MODE" = "true" ]; then
 i=0; DONE_SEEN=0
 while :; do
-print -r -- "$1" | "$CURL" -sS -N --max-time 180 "$API_URL" \
--H "Authorization: Bearer $API_KEY" \
--H "Content-Type: application/json" \
--d @- 2>/dev/null |&
-ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0; LAST_D=""; TC_RAW=""; CCNT=0; RCNT=0
+ACCUM=""; REASON=""; TOTAL_USAGE=0; TCB=""; CCNT=0; RCNT=0
+    TC_IDS=""; TC_NAMES=""; TC_ARGS=""; TC_X=""
     BUF=""; RBUF=""
     NL='
 '
-while IFS= read -r -t 300 -p LINE; do
-case "$LINE" in
-data:*)
-OUT=$(print -r -- "$LINE" | awk '
+print -r -- "$1" | "$CURL" -sS -N --max-time 180 "$API_URL" \
+-H "Authorization: Bearer $API_KEY" \
+-H "Content-Type: application/json" \
+-d @- 2>/dev/null | awk '
 function dec(s) {
   gsub(/\\"/, "\"", s)
   gsub(/\\\\/, "\001", s)
@@ -260,6 +256,10 @@ function dec(s) {
   gsub(/\\t/, "\t", s)
   gsub(/\\r/, "", s)
   gsub(/\001/, "\\", s)
+  return s
+}
+function encnl(s) {
+  gsub(/\n/, "\001", s)
   return s
 }
 function jstr(t, key,   k, p, s, out, n, i, c) {
@@ -285,12 +285,6 @@ function jstr(t, key,   k, p, s, out, n, i, c) {
   c = jstr($0, "content")
   r = jstr($0, "reasoning_content")
   a = jstr($0, "arguments")
-  id = ""
-  p = index($0, "\"id\":\"")
-  if (p > 0) { s = substr($0, p + 6); q = index(s, "\""); if (q > 0) id = substr(s, 1, q - 1) }
-  nm = ""
-  p = index($0, "\"name\":\"")
-  if (p > 0) { s = substr($0, p + 8); q = index(s, "\""); if (q > 0) nm = substr(s, 1, q - 1) }
   u = ""
   p = index($0, "\"total_tokens\":")
   if (p > 0) {
@@ -299,14 +293,27 @@ function jstr(t, key,   k, p, s, out, n, i, c) {
     while (j <= n && substr(s, j, 1) ~ /[0-9]/) j++
     u = substr(s, 1, j - 1)
   }
-  printf "C%s%cc%s%cR%s%cr%s%cA%s%cI%s%cN%s%cU%s", c, 31, dec(c), 31, r, 31, dec(r), 31, a, 31, id, 31, nm, 31, u
-}' 2>/dev/null)
-case "$OUT" in
+  id = ""; nm = ""; x = ""
+  p = index($0, "\"tool_calls\"")
+  if (p > 0) {
+    t = substr($0, p)
+    q = index(t, "\"id\":\"")
+    if (q > 0) { s = substr(t, q + 6); q2 = index(s, "\""); if (q2 > 0) id = substr(s, 1, q2 - 1) }
+    q = index(t, "\"name\":\"")
+    if (q > 0) { s = substr(t, q + 8); q2 = index(s, "\""); if (q2 > 0) nm = substr(s, 1, q2 - 1) }
+    q = index(t, "\"index\":")
+    if (q > 0) { s = substr(t, q + 8); n = length(s); j = 1; while (j <= n && substr(s, j, 1) ~ /[0-9]/) j++; x = substr(s, 1, j - 1) }
+  }
+  printf "C%s%cc%s%cR%s%cr%s%cA%s%cI%s%cN%s%cU%s%cX%s\n", c, 31, encnl(dec(c)), 31, r, 31, encnl(dec(r)), 31, a, 31, id, 31, nm, 31, u, 31, x
+}' 2>/dev/null |&
+while IFS= read -r -t 300 -p LINE 2>/dev/null; do
+case "$LINE" in
 DONE) DONE_SEEN=1; break ;;
 esac
-OIFS=$IFS; IFS=$SEP; set -f; set -- $OUT; set +f; IFS=$OIFS
-C=${1#?}; c=${2#?}; R=${3#?}; r=${4#?}; A=${5#?}; I=${6#?}; N=${7#?}
-U=${8#?}
+OIFS=$IFS; IFS=$SEP; set -f; set -- $LINE; set +f; IFS=$OIFS
+C=${1#?}; c=${2#?}; R=${3#?}; r=${4#?}; A=${5#?}; I=${6#?}; N=${7#?}; U=${8#?}; X=${9#?}
+c=${c//$'\001'/$NL}
+r=${r//$'\001'/$NL}
 [ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
 if [ -n "$C" ]; then
 [ -n "$RBUF" ] && { printf '%s\n' "$RBUF"; RBUF=""; }
@@ -339,11 +346,15 @@ REASON="$REASON$R"
     done
     fi
 fi
-[ -n "$A" ] && TC_ARGS="$TC_ARGS$A"
-[ -n "$I" ] && [ -z "$TC_ID" ] && TC_ID="$I"
-[ -n "$N" ] && [ -z "$TC_NAME" ] && TC_NAME="$N"
-;;
-esac
+if [ -n "$A" ] || [ -n "$I" ] || [ -n "$N" ]; then
+if [ -z "$TC_X" ]; then
+      TC_IDS="$I"; TC_NAMES="$N"; TC_ARGS="$A"; TC_X="$X"
+    elif [ "$X" = "$TC_X" ]; then
+      TC_ARGS="$TC_ARGS$A"
+    else
+      TC_IDS="$TC_IDS$SEP$I"; TC_NAMES="$TC_NAMES$SEP$N"; TC_ARGS="$TC_ARGS$SEP$A"; TC_X="$X"
+    fi
+fi
 done
 pkill -P $! 2>/dev/null; kill $! 2>/dev/null
 [ -n "$RBUF" ] && printf '%s\n' "$RBUF"
@@ -352,13 +363,23 @@ printf '\n'
 [ "$DONE_SEEN" = 1 ] && break
 i=$((i + 1))
 [ "$i" -ge 10 ] && break
-sleep 0.1
+sleep 2
 done
-[ "$DONE_SEEN" = 0 ] && { ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; BUF=""; RBUF=""; CCNT=0; RCNT=0; TC_RAW=""; return 0; }
+[ "$DONE_SEEN" = 0 ] && { ACCUM=""; REASON=""; BUF=""; RBUF=""; CCNT=0; RCNT=0; TCB=""; return 0; }
 if [ -n "$ACCUM" ]; then ACCUM=$(dec "$ACCUM"); else ACCUM="(无输出)"; fi
 [ -n "$REASON" ] && REASON=$(dec "$REASON")
-if [ -n "$TC_ID" ] && [ -n "$TC_ARGS" ]; then
-TC_RAW="{\"tool_calls\":[{\"id\":\"$TC_ID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_NAME\",\"arguments\":\"$TC_ARGS\"}}]}"
+if [ -n "$TC_IDS" ] && [ -n "$TC_ARGS" ]; then
+  OIFS=$IFS; IFS=$SEP; set -f
+  set -A IDS -- $TC_IDS
+  set -A NAMES -- $TC_NAMES
+  set -A ARGS -- $TC_ARGS
+  set +f; IFS=$OIFS
+  TCB=""; n=0
+  while [ "$n" -lt "${#IDS[@]}" ]; do
+    [ "$n" -gt 0 ] && TCB="$TCB$NL"
+    TCB="$TCB{\"id\":\"${IDS[$n]}\",\"type\":\"function\",\"function\":{\"name\":\"${NAMES[$n]}\",\"arguments\":\"${ARGS[$n]}\"}}"
+    n=$((n + 1))
+  done
 fi
 return 0
 fi
@@ -369,7 +390,7 @@ RESP=$(print -r -- "$1" | "$CURL" -s --max-time 300 "$API_URL" \
 -H "Content-Type: application/json" \
 -d @- 2>/dev/null)
 RESP=$(print -r -- "$RESP" | tr -d '\n')
-ACCUM=""; REASON=""; TC_ARGS=""; TC_ID=""; TC_NAME=""; TOTAL_USAGE=0; TC_RAW=""
+ACCUM=""; REASON=""; TOTAL_USAGE=0; TCB=""
 [ -z "$RESP" ] && { ACCUM="(无输出)"; return 0; }
 C=$(json_val "$RESP" content)
 if [ -n "$C" ]; then
@@ -386,24 +407,7 @@ fi
 printf '\n'
 U=$(print -r -- "$RESP" | grep -o '"total_tokens":[0-9]*' | head -n 1 | sed 's/.*://')
 [ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
-TCB_TMP=/data/local/tmp/agent_ntc_$$.txt
-json_arr_blocks "$RESP" tool_calls > "$TCB_TMP"
-TC_RAW=""; FIRST_TC=1
-while IFS= read -r TC_B; do
-[ -z "$TC_B" ] && continue
-TC_BID=$(json_val "$TC_B" id)
-TC_BNAME=$(json_val "$TC_B" name)
-TC_BARGS=$(json_val "$TC_B" arguments)
-[ -z "$TC_BARGS" ] && TC_BARGS=""
-if [ "$FIRST_TC" = 1 ]; then
-TC_RAW="{\"tool_calls\":[{\"id\":\"$TC_BID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_BNAME\",\"arguments\":\"$TC_BARGS\"}}"
-FIRST_TC=0
-else
-TC_RAW="$TC_RAW,{\"id\":\"$TC_BID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_BNAME\",\"arguments\":\"$TC_BARGS\"}}"
-fi
-done < "$TCB_TMP"
-rm -f "$TCB_TMP"
-[ "$FIRST_TC" = 0 ] && TC_RAW="$TC_RAW]}"
+TCB=$(json_arr_blocks "$RESP" tool_calls)
 if [ -n "$ACCUM" ]; then ACCUM=$(dec "$ACCUM"); else ACCUM="(无输出)"; fi
 [ -n "$REASON" ] && REASON=$(dec "$REASON")
 }
@@ -496,80 +500,78 @@ while :; do
   fi
 
 
-  if [ -n "$TC_RAW" ]; then
-    TCB_TMP=/data/local/tmp/agent_tc_$$.txt
-    json_arr_blocks "$TC_RAW" tool_calls > "$TCB_TMP"
-    if [ -s "$TCB_TMP" ]; then
-      TCS_JSON=""; TC_COUNT=0
-      while IFS= read -r TC_B; do
-        [ "$TC_COUNT" -ge "$MAX_BATCH_TOOLS" ] && break
+  if [ -n "$TCB" ]; then
+    NL='
+'
+    OIFS=$IFS; IFS=$NL; set -f; set -- $TCB; set +f; IFS=$OIFS
+    TCS_JSON=""; TC_COUNT=0
+    for TC_B in "$@"; do
+      [ "$TC_COUNT" -ge "$MAX_BATCH_TOOLS" ] && break
+      TC_BID=$(json_val "$TC_B" id)
+      TC_BNAME=$(json_val "$TC_B" name)
+      TC_BARGS=$(json_val "$TC_B" arguments)
+      [ -n "$TC_BARGS" ] && TC_BARGS=$(dec "$TC_BARGS")
+      [ -z "$TC_BNAME" ] && TC_BNAME="RUN"
+      if [ -n "$TC_BARGS" ]; then ARGS_JSON="\"$(esc "$TC_BARGS")\""; else ARGS_JSON='""'; fi
+      TCS_JSON="$TCS_JSON,{\"id\":\"$TC_BID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_BNAME\",\"arguments\":$ARGS_JSON}}"
+      TC_COUNT=$((TC_COUNT + 1))
+    done
+    if [ "$TC_COUNT" -gt 0 ]; then
+      TCS_JSON=$(print -r -- "$TCS_JSON" | sed 's/^,//')
+      if [ -n "$ACCUM" ]; then CONTENT_JSON="\"$(esc "$ACCUM")\""; else CONTENT_JSON="null"; fi
+      if [ -n "$REASON" ]; then REASON_JSON="\"$(escj "$REASON")\""; else REASON_JSON='""'; fi
+      MSGS="$MSGS,{\"role\":\"assistant\",\"content\":$CONTENT_JSON,\"reasoning_content\":$REASON_JSON,\"tool_calls\":[$TCS_JSON]}"
+      TC_EXEC=0; TOTAL_OUT=0; SKIP=0
+      for TC_B in "$@"; do
+        TC_EXEC=$((TC_EXEC + 1))
+        [ "$TC_EXEC" -gt "$MAX_BATCH_TOOLS" ] && break
         TC_BID=$(json_val "$TC_B" id)
-        TC_BNAME=$(json_val "$TC_B" name)
-        TC_BARGS=$(json_val "$TC_B" arguments)
-        [ -n "$TC_BARGS" ] && TC_BARGS=$(dec "$TC_BARGS")
-        [ -z "$TC_BNAME" ] && TC_BNAME="RUN"
-        if [ -n "$TC_BARGS" ]; then ARGS_JSON="\"$(esc "$TC_BARGS")\""; else ARGS_JSON='""'; fi
-        TCS_JSON="$TCS_JSON,{\"id\":\"$TC_BID\",\"type\":\"function\",\"function\":{\"name\":\"$TC_BNAME\",\"arguments\":$ARGS_JSON}}"
-        TC_COUNT=$((TC_COUNT + 1))
-      done < "$TCB_TMP"
-      if [ "$TC_COUNT" -gt 0 ]; then
-        TCS_JSON=$(print -r -- "$TCS_JSON" | sed 's/^,//')
-        if [ -n "$ACCUM" ]; then CONTENT_JSON="\"$(esc "$ACCUM")\""; else CONTENT_JSON="null"; fi
-        if [ -n "$REASON" ]; then REASON_JSON="\"$(escj "$REASON")\""; else REASON_JSON='""'; fi
-        MSGS="$MSGS,{\"role\":\"assistant\",\"content\":$CONTENT_JSON,\"reasoning_content\":$REASON_JSON,\"tool_calls\":[$TCS_JSON]}"
-        TC_EXEC=0; TOTAL_OUT=0; SKIP=0
-        while IFS= read -r TC_B; do
-          TC_EXEC=$((TC_EXEC + 1))
-          [ "$TC_EXEC" -gt "$MAX_BATCH_TOOLS" ] && break
-          TC_BID=$(json_val "$TC_B" id)
-          [ -z "$TC_BID" ] && TC_BID="call_$((TC_EXEC - 1))"
-          TC_BARGS_RAW=$(json_val "$TC_B" arguments)
-          TC_BARGS=$(dec "$TC_BARGS_RAW")
-          CMD=$(json_val "$TC_BARGS" command)
+        [ -z "$TC_BID" ] && TC_BID="call_$((TC_EXEC - 1))"
+        TC_BARGS_RAW=$(json_val "$TC_B" arguments)
+        TC_BARGS=$(dec "$TC_BARGS_RAW")
+        CMD=$(json_val "$TC_BARGS" command)
+        [ -n "$CMD" ] && CMD=$(dec "$CMD")
+        if [ -z "$CMD" ] && [ -n "$TC_BARGS" ]; then
+          CMD=$(print -r -- "$TC_BARGS" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed 's/^"command"[[:space:]]*:[[:space:]]*"//; s/"$//')
           [ -n "$CMD" ] && CMD=$(dec "$CMD")
-          if [ -z "$CMD" ] && [ -n "$TC_BARGS" ]; then
-            CMD=$(print -r -- "$TC_BARGS" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed 's/^"command"[[:space:]]*:[[:space:]]*"//; s/"$//')
-            [ -n "$CMD" ] && CMD=$(dec "$CMD")
+        fi
+        if [ -z "$CMD" ] && [ -n "$TC_BARGS" ]; then
+          INNER=$(json_val "$TC_BARGS" arguments)
+          [ -n "$INNER" ] && INNER=$(dec "$INNER")
+          [ -n "$INNER" ] && CMD=$(json_val "$INNER" command)
+          [ -n "$CMD" ] && CMD=$(dec "$CMD")
+        fi
+        if [ -n "$CMD" ]; then
+          if [ "$SKIP" -eq 1 ]; then
+            MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"(输出预算超限,本命令未执行)\"}"
+            continue
           fi
-          if [ -z "$CMD" ] && [ -n "$TC_BARGS" ]; then
-            INNER=$(json_val "$TC_BARGS" arguments)
-            [ -n "$INNER" ] && INNER=$(dec "$INNER")
-            [ -n "$INNER" ] && CMD=$(json_val "$INNER" command)
-            [ -n "$CMD" ] && CMD=$(dec "$CMD")
+          echo "[工具] $CMD"
+          OUT=$(run_ui "$CMD")
+          TOTAL_OUT=$((TOTAL_OUT + ${#OUT}))
+          MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"$(esc "$OUT")\"}"
+          if [ "$TOTAL_OUT" -gt "$MAX_BATCH_OUT" ]; then
+            echo "[批量] 输出预算超限(${TOTAL_OUT}>${MAX_BATCH_OUT}),剩余命令跳过"
+            SKIP=1
           fi
-          if [ -n "$CMD" ]; then
-            if [ "$SKIP" -eq 1 ]; then
-              MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"(输出预算超限,本命令未执行)\"}"
-              continue
-            fi
-            echo "[工具] $CMD"
-            OUT=$(run_ui "$CMD")
-            TOTAL_OUT=$((TOTAL_OUT + ${#OUT}))
-            MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"$(esc "$OUT")\"}"
-            if [ "$TOTAL_OUT" -gt "$MAX_BATCH_OUT" ]; then
-              echo "[批量] 输出预算超限(${TOTAL_OUT}>${MAX_BATCH_OUT}),剩余命令跳过"
-              SKIP=1
-            fi
-          else
-            MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"(工具调用解析失败)\"}"
-          fi
-          done < "$TCB_TMP"
-        rm -f "$TCB_TMP"
-        continue
-      fi
+        else
+          MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"(工具调用解析失败)\"}"
+        fi
+      done
+      continue
     fi
-    rm -f "$TCB_TMP"
   fi
 
   CMD2=$(extract_tool_calls "$ACCUM")
   if [ -n "$CMD2" ]; then
-    CMDS_TMP=/data/local/tmp/agent_cmds_$$.txt
-    print -r -- "$CMD2" > "$CMDS_TMP"
+    NL='
+'
+    OIFS=$IFS; IFS=$NL; set -f; set -- $CMD2; set +f; IFS=$OIFS
     FIRST=""
-    while IFS= read -r CC; do
+    for CC in "$@"; do
       CC=$(print -r -- "$CC" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
       [ -n "$CC" ] && [ -z "$FIRST" ] && FIRST="$CC"
-    done < "$CMDS_TMP"
+    done
     if [ -n "$FIRST" ]; then
       if [ "$FIRST" = "$LAST_CAUGHT" ]; then
         REPEAT=$((REPEAT + 1))
@@ -583,25 +585,21 @@ while :; do
     fi
     if [ -n "$REASON" ]; then REASON_JSON="\"$(escj "$REASON")\""; else REASON_JSON='""'; fi
     MSGS="$MSGS,{\"role\":\"assistant\",\"content\":\"$(esc "$ACCUM")\",\"reasoning_content\":$REASON_JSON}"
-    OUT_ALL=""; TOTAL_OUT=0; EXEC_TMP=/data/local/tmp/agent_exec_$$.txt; : > "$EXEC_TMP"
-    while IFS= read -r CC; do
+    OUT_ALL=""; TOTAL_OUT=0; EXEC_DONE="$NL"
+    for CC in "$@"; do
       CC=$(print -r -- "$CC" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
       [ -z "$CC" ] && continue
-      if grep -Fxq "$CC" "$EXEC_TMP" 2>/dev/null; then
-        echo "[批量] 跳过重复命令: $CC"
-        continue
-      fi
+      case "$EXEC_DONE" in *"$NL$CC$NL"*) echo "[批量] 跳过重复命令: $CC"; continue ;; esac
       if [ "$TOTAL_OUT" -gt "$MAX_BATCH_OUT" ]; then
         echo "[批量] 输出预算超限,跳过: $CC"
         continue
       fi
       echo "[工具] $CC"
       OUT=$(run_ui "$CC")
-      print -r -- "$CC" >> "$EXEC_TMP"
+      EXEC_DONE="$EXEC_DONE$CC$NL"
       TOTAL_OUT=$((TOTAL_OUT + ${#OUT}))
       OUT_ALL="$OUT_ALL |cmd| $CC => $OUT"
-    done < "$CMDS_TMP"
-    rm -f "$CMDS_TMP" "$EXEC_TMP"
+    done
     if [ -n "$OUT_ALL" ]; then
       MSGS="$MSGS,{\"role\":\"user\",\"content\":\"[工具结果] $(esc "$OUT_ALL")\"}"
     else
