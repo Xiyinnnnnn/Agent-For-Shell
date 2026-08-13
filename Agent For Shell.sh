@@ -8,7 +8,7 @@
 #param: MODEL|模型名|deepseek-v4-flash
 #---
 
-API_URL="https://api.deepseek.com/chat/completions"
+API_URL="https://opencode.ai/zen/go/v1/chat/completions"
 MODEL_DEFAULT="deepseek-v4-flash"
 SUMTOK=900000
 AUTH_TIMEOUT=10
@@ -356,7 +356,7 @@ if [ -z "$TC_X" ]; then
     fi
 fi
 done
-pkill -P $! 2>/dev/null; kill $! 2>/dev/null
+pkill -9 -P $! 2>/dev/null; kill -9 $! 2>/dev/null
 [ -n "$RBUF" ] && printf '%s\n' "$RBUF"
     [ -n "$BUF" ] && printf '%s\n' "$BUF"
 printf '\n'
