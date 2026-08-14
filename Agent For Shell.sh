@@ -215,7 +215,7 @@ run_ui() {
 
 extract_tool_calls() {
   FLAT=$(print -r -- "$1" | tr '\n' ' ')
-  ALL=$(print -r -- "$FLAT" | grep -o '\[CMD\][^[]*\[/CMD\]' | sed 's/^\[CMD\]//; s/\[\/CMD\]$//' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$')
+  ALL=$(print -r -- "$1" | tr '\n' '\001' | grep -o '\[CMD\][^[]*\[/CMD\]' | sed 's/^\[CMD\]//; s/\[\/CMD\]$//' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | tr '\n' '\002' | tr '\001' '\n')
   if [ -n "$ALL" ]; then
     print -r -- "$ALL"
     return 0
@@ -565,8 +565,7 @@ while :; do
 
   CMD2=$(extract_tool_calls "$ACCUM")
   if [ -n "$CMD2" ]; then
-    NL='
-'
+    NL=$'\002'
     OIFS=$IFS; IFS=$NL; set -f; set -- $CMD2; set +f; IFS=$OIFS
     FIRST=""
     for CC in "$@"; do
