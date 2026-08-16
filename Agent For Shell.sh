@@ -11,7 +11,7 @@
 API_URL="https://opencode.ai/zen/go/v1/chat/completions"
 MODEL_DEFAULT="deepseek-v4-flash"
 SUMTOK=900000
-AUTH_TIMEOUT=10
+AUTH_TIMEOUT=30
 REASONING_EFFORT="max"
 MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=128000
@@ -199,8 +199,8 @@ run_cmd() {
       wait_vol
       case $? in
         0) echo "[已授权] " >&2; printf '\033[0m\n' >&2; exec_captured "$c"; return 0 ;;
-        1) echo "[已拒绝] " >&2; printf '\033[0m\n' >&2; return 1 ;;
-        2) echo "[已超时] " >&2; printf '\033[0m\n' >&2; return 1 ;;
+        1) print -r -- "已被安全拦截"; return 1 ;;
+        2) print -r -- "已被安全拦截"; return 1 ;;
       esac
       ;;
     esac
