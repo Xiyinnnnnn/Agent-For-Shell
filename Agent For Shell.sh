@@ -3,13 +3,12 @@
 #author: Xiyinnnnnn
 #brand: 通用
 #description: Agent For Shell
-#param: API_KEY|DeepSeek API Key|
+#param: API_KEY|本地模型 API Key|
 #param: QUESTION|本次问题|你好
-#param: MODEL|模型名|deepseek-v4-flash
+#param: MODEL|模型名|
 #---
 
-API_URL="https://opencode.ai/zen/go/v1/chat/completions"
-MODEL_DEFAULT="deepseek-v4-flash"
+API_URL="/v1/chat/completions"
 SUMTOK=900000
 AUTH_TIMEOUT=30
 REASONING_EFFORT="max"
@@ -42,9 +41,6 @@ MODEL="$(cat <<'MEOF'
 {{MODEL}}
 MEOF
 )"
-case "$MODEL" in
-""|"{{MO""DEL}}") MODEL="$MODEL_DEFAULT" ;;
-esac
 
 CURL=$(command -v curl 2>/dev/null || echo /data/data/com.termux/files/usr/bin/curl)
 
@@ -245,7 +241,7 @@ ACCUM=""; REASON=""; TOTAL_USAGE=0; TCB=""; CCNT=0; RCNT=0
     BUF=""; RBUF=""
     NL='
 '
-print -r -- "$1" | "$CURL" -sS -N --max-time 180 "$API_URL" \
+print -r -- "$1" | "$CURL" -sS -N --noproxy '*' --max-time 180 "$API_URL" \
 -H "Authorization: Bearer $API_KEY" \
 -H "Content-Type: application/json" \
 -d @- 2>/dev/null | awk '
@@ -385,7 +381,7 @@ return 0
 fi
 
 
-RESP=$(print -r -- "$1" | "$CURL" -s --max-time 300 "$API_URL" \
+RESP=$(print -r -- "$1" | "$CURL" -s --noproxy '*' --max-time 300 "$API_URL" \
 -H "Authorization: Bearer $API_KEY" \
 -H "Content-Type: application/json" \
 -d @- 2>/dev/null)
@@ -414,7 +410,7 @@ if [ -n "$ACCUM" ]; then ACCUM=$(dec "$ACCUM"); else ACCUM="(无输出)"; fi
 
 compress_summary() {
   BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS,{\"role\":\"user\",\"content\":\"[总结所有]\"}],\"max_tokens\":$MAXTOK,\"stream\":false}"
-  RESP=$(print -r -- "$BODY" | "$CURL" -s --max-time 300 "$API_URL" \
+  RESP=$(print -r -- "$BODY" | "$CURL" -s --noproxy '*' --max-time 300 "$API_URL" \
     -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d @-)
   NEW=$(json_val "$RESP" content)
   [ -n "$NEW" ] && NEW=$(dec "$NEW")
