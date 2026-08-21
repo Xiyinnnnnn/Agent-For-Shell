@@ -58,18 +58,18 @@ esc() {
   print -r -- "$1" | tr '\n\t\r' '   ' | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 escj() {
-  print -r -- "$1" | tr '	' '  ' | awk '
+  print -r -- "$1" | tr '\t\r' '  ' | awk -v Q='"' -v BS='\' '
 function E(s,   o, n, i, c) {
   n = length(s); o = ""
   for (i = 1; i <= n; i++) {
     c = substr(s, i, 1)
-    if (c == "\") o = o "\\"
-    else if (c == "\"") o = o "\\""
+    if (c == BS) o = o BS BS
+    else if (c == Q) o = o BS Q
     else o = o c
   }
   return o
 }
-{ out = out E($0) "\n" } END { printf "%s", out }'
+{ out = out E($0) "\\n" } END { printf "%s", out }'
 }
 dec() {
   print -r -- "$1" | sed 's/\\"/"/g' | awk '{ gsub(/\\\\/, "\001"); gsub(/\\n/, "\n"); gsub(/\\t/, "\t"); gsub(/\\r/, ""); gsub(/\001/, "\\"); print }'
