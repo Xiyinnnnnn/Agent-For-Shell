@@ -465,8 +465,6 @@ P5 存忆存技: 写 记忆目录/摘要名.md；经验→写 技能目录/摘�
   参数写死在脚本顶部，要改→告诉用户修改'
 
 
-# img_build: QUESTION 含图片路径/URL → OpenAI content 数组；无图→原字符串
-# DeepSeek 支持集 JPEG/PNG/GIF/WebP；本地单图>8MB 跳过；URL 直连不走 base64
 img_build() {
   _q=$1 _has=0 _txt= _imgs= _urls= _max=8388608
   set -- $_q
