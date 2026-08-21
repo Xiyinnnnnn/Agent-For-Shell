@@ -236,15 +236,18 @@ ask_llm() {
 if [ "$STREAM_MODE" = "true" ]; then
 i=0; DONE_SEEN=0
 while :; do
-ACCUM=""; REASON=""; TOTAL_USAGE=0; TCB=""; CCNT=0; RCNT=0
+ACCUM=""; REASON=""; TOTAL_USAGE=0; TCB=""
     TC_IDS=""; TC_NAMES=""; TC_ARGS=""; TC_X=""
-    BUF=""; RBUF=""
     NL='
 '
-print -r -- "$1" | "$CURL" -sS -N --noproxy '*' --max-time 180 "$API_URL" \
--H "Authorization: Bearer $API_KEY" \
--H "Content-Type: application/json" \
--d @- 2>/dev/null | awk '
+print -r -- "$1" | "$CURL" -sS -N --noproxy '*' --max-time 180 "$API_URL" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d @- 2>/dev/null | awk '
+function get(s, key) {
+  if (match(s, "\"" key "\":\"")) {
+    t = substr(s, RSTART + RLENGTH)
+    if (match(t, /^(([^"\\]|\\.)*)/)) return substr(t, RSTART, RLENGTH)
+  }
+  return ""
+}
 function dec(s) {
   gsub(/\\"/, "\"", s)
   gsub(/\\\\/, "\001", s)
@@ -258,29 +261,12 @@ function encnl(s) {
   gsub(/\n/, "\001", s)
   return s
 }
-function jstr(t, key,   k, p, s, out, n, i, c) {
-  k = "\"" key "\":\""
-  p = index(t, k)
-  if (p == 0) return ""
-  s = substr(t, p + length(k))
-  out = ""
-  n = length(s)
-  i = 1
-  while (i <= n) {
-    c = substr(s, i, 1)
-    if (c == "\\") { out = out substr(s, i, 2); i = i + 2; continue }
-    if (c == "\"") break
-    out = out c
-    i = i + 1
-  }
-  return out
-}
 {
   if (sub(/^data:[[:space:]]*/, "", $0) == 0) next
-  if ($0 ~ /^\[DONE\][[:space:]]*$/) { print "DONE"; exit }
-  c = jstr($0, "content")
-  r = jstr($0, "reasoning_content")
-  a = jstr($0, "arguments")
+  if ($0 ~ /^\[DONE\][[:space:]]*$/) exit
+  c = get($0, "content")
+  r = get($0, "reasoning_content")
+  a = get($0, "arguments")
   u = ""
   p = index($0, "\"total_tokens\":")
   if (p > 0) {
@@ -300,70 +286,61 @@ function jstr(t, key,   k, p, s, out, n, i, c) {
     q = index(t, "\"index\":")
     if (q > 0) { s = substr(t, q + 8); n = length(s); j = 1; while (j <= n && substr(s, j, 1) ~ /[0-9]/) j++; x = substr(s, 1, j - 1) }
   }
-  printf "C%s%cc%s%cR%s%cr%s%cA%s%cI%s%cN%s%cU%s%cX%s\n", c, 31, encnl(dec(c)), 31, r, 31, encnl(dec(r)), 31, a, 31, id, 31, nm, 31, u, 31, x
+  if (c != "") { CC = CC c; CN = CN + 1 }
+  if (r != "") { RR = RR r; RN = RN + 1 }
+  if (CN + RN >= 50) {
+    if (RN > 0) printf "R%s\n", encnl(dec(RR))
+    if (CN > 0) printf "C%s\n", encnl(dec(CC))
+    CC = ""; RR = ""; CN = 0; RN = 0
+  }
+  if (a != "" || id != "" || nm != "" || u != "" || x != "") {
+    printf "A%s%cI%s%cN%s%cU%s%cX%s\n", a, 31, id, 31, nm, 31, u, 31, x
+  }
+}
+END {
+  if (CN > 0 || RN > 0) {
+    if (RN > 0) printf "R%s\n", encnl(dec(RR))
+    if (CN > 0) printf "C%s\n", encnl(dec(CC))
+  }
+  print "DONE"
 }' 2>/dev/null |&
 while IFS= read -r -t 300 -p LINE 2>/dev/null; do
 case "$LINE" in
 DONE) DONE_SEEN=1; break ;;
+A*)  OIFS=$IFS; IFS=$SEP; set -f; set -- $LINE; set +f; IFS=$OIFS
+     A=${1#?}; I=${2#?}; N=${3#?}; U=${4#?}; X=${5#?}
+     [ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
+     if [ -n "$A" ] || [ -n "$I" ] || [ -n "$N" ]; then
+       if [ -z "$TC_X" ]; then
+         TC_IDS="$I"; TC_NAMES="$N"; TC_ARGS="$A"; TC_X="$X"
+       elif [ "$X" = "$TC_X" ]; then
+         TC_ARGS="$TC_ARGS$A"
+       else
+         TC_IDS="$TC_IDS$SEP$I"; TC_NAMES="$TC_NAMES$SEP$N"; TC_ARGS="$TC_ARGS$SEP$A"; TC_X="$X"
+       fi
+     fi ;;
+R*)  R=${LINE#R}
+     R=${R//$''/$NL}
+     if [ -z "$REASON" ]; then echo; echo "[思维链]:"; fi
+     printf '%s' "$R"
+     REASON="$REASON$R" ;;
+C*)  C=${LINE#C}
+     C=${C//$''/$NL}
+     if [ -z "$ACCUM" ]; then echo; echo "[正文]:"; fi
+     printf '%s' "$C"
+     ACCUM="$ACCUM$C" ;;
 esac
-OIFS=$IFS; IFS=$SEP; set -f; set -- $LINE; set +f; IFS=$OIFS
-C=${1#?}; c=${2#?}; R=${3#?}; r=${4#?}; A=${5#?}; I=${6#?}; N=${7#?}; U=${8#?}; X=${9#?}
-c=${c//$'\001'/$NL}
-r=${r//$'\001'/$NL}
-[ -n "$U" ] && [ "$U" -gt 0 ] 2>/dev/null && TOTAL_USAGE=$U
-if [ -n "$C" ]; then
-[ -n "$RBUF" ] && { printf '%s\n' "$RBUF"; RBUF=""; }
-if [ -z "$ACCUM" ]; then echo; echo "[正文]:"; fi
-ACCUM="$ACCUM$C"
-    BUF="$BUF$c"
-    CCNT=$((CCNT + 1))
-    if [ "$CCNT" -ge "$MAX_CHU" ]; then
-      CCNT=0
-    while :; do
-      case "$BUF" in
-        *"$NL"*) printf '%s\n' "${BUF%%"$NL"*}"; BUF="${BUF#*"$NL"}" ;;
-        *) break ;;
-      esac
-    done
-    fi
-fi
-if [ -n "$R" ]; then
-if [ -z "$REASON" ]; then echo; echo "[思维链]:"; fi
-REASON="$REASON$R"
-    RBUF="$RBUF$r"
-    RCNT=$((RCNT + 1))
-    if [ "$RCNT" -ge "$MAX_CHU" ]; then
-      RCNT=0
-    while :; do
-      case "$RBUF" in
-        *"$NL"*) printf '%s\n' "${RBUF%%"$NL"*}"; RBUF="${RBUF#*"$NL"}" ;;
-        *) break ;;
-      esac
-    done
-    fi
-fi
-if [ -n "$A" ] || [ -n "$I" ] || [ -n "$N" ]; then
-if [ -z "$TC_X" ]; then
-      TC_IDS="$I"; TC_NAMES="$N"; TC_ARGS="$A"; TC_X="$X"
-    elif [ "$X" = "$TC_X" ]; then
-      TC_ARGS="$TC_ARGS$A"
-    else
-      TC_IDS="$TC_IDS$SEP$I"; TC_NAMES="$TC_NAMES$SEP$N"; TC_ARGS="$TC_ARGS$SEP$A"; TC_X="$X"
-    fi
-fi
 done
 pkill -9 -P $! 2>/dev/null; kill -9 $! 2>/dev/null
-[ -n "$RBUF" ] && printf '%s\n' "$RBUF"
-    [ -n "$BUF" ] && printf '%s\n' "$BUF"
-printf '\n'
+printf '
+'
 [ "$DONE_SEEN" = 1 ] && break
 i=$((i + 1))
 [ "$i" -ge 10 ] && break
 sleep 2
 done
-[ "$DONE_SEEN" = 0 ] && { ACCUM=""; REASON=""; BUF=""; RBUF=""; CCNT=0; RCNT=0; TCB=""; return 0; }
-if [ -n "$ACCUM" ]; then ACCUM=$(dec "$ACCUM"); else ACCUM="(无输出)"; fi
-[ -n "$REASON" ] && REASON=$(dec "$REASON")
+[ "$DONE_SEEN" = 0 ] && { ACCUM=""; REASON=""; TCB=""; return 0; }
+if [ -z "$ACCUM" ]; then ACCUM="(无输出)"; fi
 if [ -n "$TC_IDS" ] && [ -n "$TC_ARGS" ]; then
   OIFS=$IFS; IFS=$SEP; set -f
   set -A IDS -- $TC_IDS
@@ -378,6 +355,7 @@ if [ -n "$TC_IDS" ] && [ -n "$TC_ARGS" ]; then
   done
 fi
 return 0
+
 fi
 
 
