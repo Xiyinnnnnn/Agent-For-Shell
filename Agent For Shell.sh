@@ -242,7 +242,7 @@ ACCUM=""; REASON=""; TOTAL_USAGE=0; TCB=""; ACCUM_DISP=""; REASON_DISP=""
 '
 print -r -- "$1" | "$CURL" -sS -N --noproxy '*' --max-time 180 "$API_URL" -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d @- 2>/dev/null | awk '
 function get(s, key) {
-  if (match(s, "\"" key "\":\"")) {
+  if (match(s, "\"" key "\"[[:space:]]*:[[:space:]]*\"")) {
     t = substr(s, RSTART + RLENGTH)
     if (match(t, /^(([^"\\]|\\.)*)/)) return substr(t, RSTART, RLENGTH)
   }
@@ -279,12 +279,12 @@ function encnl(s) {
   p = index($0, "\"tool_calls\"")
   if (p > 0) {
     t = substr($0, p)
-    q = index(t, "\"id\":\"")
-    if (q > 0) { s = substr(t, q + 6); q2 = index(s, "\""); if (q2 > 0) id = substr(s, 1, q2 - 1) }
-    q = index(t, "\"name\":\"")
-    if (q > 0) { s = substr(t, q + 8); q2 = index(s, "\""); if (q2 > 0) nm = substr(s, 1, q2 - 1) }
+    q = index(t, "\"id\":")
+    if (q > 0) { s = substr(t, q + 5); sub(/^[ ]*/, "", s); if (substr(s, 1, 1) == "\"") { s = substr(s, 2); q2 = index(s, "\""); if (q2 > 0) id = substr(s, 1, q2 - 1) } }
+    q = index(t, "\"name\":")
+    if (q > 0) { s = substr(t, q + 7); sub(/^[ ]*/, "", s); if (substr(s, 1, 1) == "\"") { s = substr(s, 2); q2 = index(s, "\""); if (q2 > 0) nm = substr(s, 1, q2 - 1) } }
     q = index(t, "\"index\":")
-    if (q > 0) { s = substr(t, q + 8); n = length(s); j = 1; while (j <= n && substr(s, j, 1) ~ /[0-9]/) j++; x = substr(s, 1, j - 1) }
+    if (q > 0) { s = substr(t, q + 8); sub(/^[ ]*/, "", s); n = length(s); j = 1; while (j <= n && substr(s, j, 1) ~ /[0-9]/) j++; x = substr(s, 1, j - 1) }
   }
   if (r != "") { printf "Pr%s\n", encnl(dec(r)); RR = RR r; RN = RN + 1 }
   if (c != "") { printf "Pc%s\n", encnl(dec(c)); CC = CC c; CN = CN + 1 }
