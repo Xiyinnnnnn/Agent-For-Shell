@@ -236,7 +236,7 @@ ask_llm() {
 if [ "$STREAM_MODE" = "true" ]; then
 i=0; DONE_SEEN=0
 while :; do
-ACCUM=""; REASON=""; TOTAL_USAGE=0; TCB=""
+ACCUM=""; REASON=""; TOTAL_USAGE=0; TCB=""; ACCUM_DISP=""; REASON_DISP=""
     TC_IDS=""; TC_NAMES=""; TC_ARGS=""; TC_X=""
     NL='
 '
@@ -286,22 +286,15 @@ function encnl(s) {
     q = index(t, "\"index\":")
     if (q > 0) { s = substr(t, q + 8); n = length(s); j = 1; while (j <= n && substr(s, j, 1) ~ /[0-9]/) j++; x = substr(s, 1, j - 1) }
   }
-  if (c != "") { CC = CC c; CN = CN + 1 }
-  if (r != "") { RR = RR r; RN = RN + 1 }
-  if (CN + RN >= 50) {
-    if (RN > 0) printf "R%s\n", encnl(dec(RR))
-    if (CN > 0) printf "C%s\n", encnl(dec(CC))
-    CC = ""; RR = ""; CN = 0; RN = 0
-  }
+  if (r != "") { printf "Pr%s\n", encnl(dec(r)); RR = RR r; RN = RN + 1 }
+  if (c != "") { printf "Pc%s\n", encnl(dec(c)); CC = CC c; CN = CN + 1 }
+  if (RN + CN >= 500) { if (RN > 0 || CN > 0) printf "S%s%c%s\n", RR, 31, CC; RN = 0; CN = 0; RR = ""; CC = "" }
   if (a != "" || id != "" || nm != "" || u != "" || x != "") {
     printf "A%s%cI%s%cN%s%cU%s%cX%s\n", a, 31, id, 31, nm, 31, u, 31, x
   }
 }
 END {
-  if (CN > 0 || RN > 0) {
-    if (RN > 0) printf "R%s\n", encnl(dec(RR))
-    if (CN > 0) printf "C%s\n", encnl(dec(CC))
-  }
+  if (RN > 0 || CN > 0) printf "S%s%c%s\n", RR, 31, CC
   print "DONE"
 }' 2>/dev/null |&
 while IFS= read -r -t 300 -p LINE 2>/dev/null; do
@@ -319,16 +312,16 @@ A*)  OIFS=$IFS; IFS=$SEP; set -f; set -- $LINE; set +f; IFS=$OIFS
          TC_IDS="$TC_IDS$SEP$I"; TC_NAMES="$TC_NAMES$SEP$N"; TC_ARGS="$TC_ARGS$SEP$A"; TC_X="$X"
        fi
      fi ;;
-R*)  R=${LINE#R}
-     R=${R//$''/$NL}
-     if [ -z "$REASON" ]; then echo; echo "[思维链]:"; fi
-     printf '%s' "$R"
-     REASON="$REASON$R" ;;
-C*)  C=${LINE#C}
-     C=${C//$''/$NL}
-     if [ -z "$ACCUM" ]; then echo; echo "[正文]:"; fi
-     printf '%s' "$C"
-     ACCUM="$ACCUM$C" ;;
+Pr*) P=${LINE#Pr}
+     P=${P//$''/$NL}
+     if [ -z "$REASON_DISP" ]; then echo; echo "[思维链]:"; REASON_DISP=1; fi
+     printf '%s' "$P" ;;
+Pc*) P=${LINE#Pc}
+     P=${P//$''/$NL}
+     if [ -z "$ACCUM_DISP" ]; then echo; echo "[正文]:"; ACCUM_DISP=1; fi
+     printf '%s' "$P" ;;
+S*)  S=${LINE#S}; OIFS=$IFS; IFS=$SEP; set -f; set -- $S; set +f; IFS=$OIFS
+     REASON="$REASON${1#?}"; ACCUM="$ACCUM${2#?}" ;;
 esac
 done
 pkill -9 -P $! 2>/dev/null; kill -9 $! 2>/dev/null
@@ -340,6 +333,8 @@ i=$((i + 1))
 sleep 2
 done
 [ "$DONE_SEEN" = 0 ] && { ACCUM=""; REASON=""; TCB=""; return 0; }
+ACCUM=$(dec "$ACCUM")
+[ -n "$REASON" ] && REASON=$(dec "$REASON")
 if [ -z "$ACCUM" ]; then ACCUM="(无输出)"; fi
 if [ -n "$TC_IDS" ] && [ -n "$TC_ARGS" ]; then
   OIFS=$IFS; IFS=$SEP; set -f
