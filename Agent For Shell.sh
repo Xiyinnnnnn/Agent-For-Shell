@@ -483,10 +483,38 @@ P5 存忆存技: 写 记忆目录/摘要名.md；经验→写 技能目录/摘�
   参数写死在脚本顶部，要改→告诉用户修改'
 
 
+# img_build: QUESTION 含图片路径(本地/file://) → OpenAI content 数组；无图→原字符串
+# DeepSeek 官方支持集 JPEG/PNG/GIF/WebP；单图>3MB 跳过防 shell 变量爆
+img_build() {
+  _q=$1 _has=0 _txt= _imgs= _max=3145728
+  set -- $_q
+  for _t in "$@"; do
+    case "$_t" in file://*) _p=${_t#file://} ;; *) _p=$_t ;; esac
+    _ext=$(printf '%s' "$_p" | sed 's/.*\.//' | tr 'A-Z' 'a-z')
+    if [ -f "$_p" ] && { [ "$_ext" = jpg ] || [ "$_ext" = jpeg ] || [ "$_ext" = png ] || [ "$_ext" = gif ] || [ "$_ext" = webp ]; }; then
+      _size=$(wc -c < "$_p" 2>/dev/null)
+      if [ -n "$_size" ] && [ "$_size" -le "$_max" ]; then _has=1; _imgs="$_imgs $_p"; continue; fi
+    fi
+    _txt="$_txt $_t"
+  done
+  if [ "$_has" -eq 0 ]; then printf '"%s"' "$(printf '%s' "$_q" | sed 's/\\/\\\\/g; s/"/\\"/g')"; return; fi
+  _t0=${_txt# }
+  [ -z "$_t0" ] && _t0="看图"
+  _c="[{\"type\":\"text\",\"text\":\"$(printf '%s' "$_t0" | sed 's/\\/\\\\/g; s/"/\\"/g')\"}"
+  for _p in $_imgs; do
+    case "$_p" in file://*) _pp=${_p#file://} ;; *) _pp=$_p ;; esac
+    _ext=$(printf '%s' "$_pp" | sed 's/.*\.//' | tr 'A-Z' 'a-z')
+    case "$_ext" in jpg|jpeg) _m=image/jpeg ;; png) _m=image/png ;; gif) _m=image/gif ;; webp) _m=image/webp ;; esac
+    _b64=$(base64 < "$_pp" 2>/dev/null | tr -d '\n')
+    _c="$_c,{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:$_m;base64,$_b64\"}}"
+  done
+  printf '%s]' "$_c"
+}
+
 TOOLS='[{"type":"function","function":{"name":"RUN","description":"在终端执行 shell 命令并返回输出，一切系统操作都通过它完成","parameters":{"type":"object","properties":{"command":{"type":"string","description":"要执行的命令"},"explain":{"type":"string","description":"为什么执行这条命令"},"dangerous":{"type":"boolean","description":"是否涉及删除/覆盖/安装/系统级修改，是则true"}},"required":["command","explain","dangerous"]}}}]'
 
 MSGS="{\"role\":\"system\",\"content\":\"$(esc "$SYS")\"}"
-MSGS="$MSGS,{\"role\":\"user\",\"content\":\"$(esc "$QUESTION")\"}"
+MSGS="$MSGS,{\"role\":\"user\",\"content\":$(img_build "$QUESTION")}"
 
 echo "====Agent For Shell====="
 echo "问题 : $QUESTION"
