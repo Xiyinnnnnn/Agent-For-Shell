@@ -370,7 +370,7 @@ printf '
 [ "$DONE_SEEN" = 1 ] && break
 i=$((i + 1))
 [ "$i" -ge 10 ] && break
-sleep 2
+sleep 1
 done
 [ "$DONE_SEEN" = 0 ] && { ACCUM=""; REASON=""; TCB=""; return 0; }
 ACCUM=$(dec "$ACCUM")
@@ -422,15 +422,23 @@ if [ -n "$ACCUM" ]; then ACCUM=$(dec "$ACCUM"); else ACCUM="(无输出)"; fi
 }
 
 compress_summary() {
-  BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS,{\"role\":\"user\",\"content\":\"[总结所有]\"}],\"max_tokens\":$MAXTOK,\"stream\":false}"
-  RESP=$(print -r -- "$BODY" | "$CURL" -s --noproxy '*' --max-time 300 "$API_URL" \
-    -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d @-)
-  NEW=$(json_val "$RESP" content)
-  [ -n "$NEW" ] && NEW=$(dec "$NEW")
-  [ -z "$NEW" ] && NEW=$(json_val "$RESP" message)
-  [ -z "$NEW" ] && NEW="解析失败"
-  SUMMARY="[历史背景] $NEW"
-  MSGS="{\"role\":\"system\",\"content\":\"$(esc "$SYS")\"},{\"role\":\"user\",\"content\":\"$(esc "$SUMMARY")\"},{\"role\":\"user\",\"content\":\"$(esc "$QUESTION")\"}"
+  i=0
+  while :; do
+    BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS,{\"role\":\"user\",\"content\":\"[总结所有]\"}],\"max_tokens\":$((MAXTOK / 2)),\"stream\":false,\"thinking\":{\"type\":\"disabled\"}}"
+    RESP=$(print -r -- "$BODY" | "$CURL" -s --noproxy '*' --max-time 300 "$API_URL" \
+      -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d @-)
+    NEW=$(json_val "$RESP" content)
+    [ -n "$NEW" ] && NEW=$(dec "$NEW")
+    [ -z "$NEW" ] && NEW=$(json_val "$RESP" message)
+    if [ -n "$NEW" ]; then
+      SUMMARY="[历史背景] $NEW"
+      MSGS="{\"role\":\"system\",\"content\":\"$(esc "$SYS")\"},{\"role\":\"user\",\"content\":\"$(esc "$SUMMARY")\"},{\"role\":\"user\",\"content\":\"$(esc "$QUESTION")\"}"
+      return 0
+    fi
+    i=$((i + 1))
+    [ "$i" -ge 10 ] && break
+    sleep 1
+  done
 }
 
 SYS='You are a helpful assistant.
