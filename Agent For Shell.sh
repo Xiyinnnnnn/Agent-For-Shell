@@ -72,6 +72,37 @@ function E(s,   o, n, i, c) {
 dec() {
   print -r -- "$1" | sed 's/\\"/"/g' | awk '{ gsub(/\\\\/, "\001"); gsub(/\\n/, "\n"); gsub(/\\t/, "\t"); gsub(/\\r/, ""); gsub(/\001/, "\\"); print }'
 }
+get_cmd() {
+  print -r -- "$1" | LC_ALL=C awk '
+  {
+    k = "\\\"command\\\":"
+    p = index($0, k)
+    if (p == 0) { k = "\"command\":"; p = index($0, k) }
+    if (p > 0) {
+      t = substr($0, p + length(k))
+      sub(/^[ ]*/, "", t)
+      if (substr(t,1,1) == "\\") t = substr(t, 2)
+      if (substr(t,1,1) == "\"") t = substr(t, 2)
+      out = ""; n = length(t); i = 1
+      while (i <= n) {
+        c = substr(t, i, 1)
+        if (c == "\\") {
+          nxt = substr(t, i+1, 1)
+          if (nxt == "\"") {
+            after = substr(t, i+2, 1)
+            if (after == "," || after == "}" || after == "") break
+          }
+          out = out substr(t, i, 2); i += 2
+        } else if (c == "\"") {
+          after = substr(t, i+1, 1)
+          if (after == "," || after == "}" || after == "") break
+          out = out c; i++
+        } else { out = out c; i++ }
+      }
+      print out
+    }
+  }'
+}
 json_val() {
   print -r -- "$1" | LC_ALL=C awk -v k="\"$2\":" '
   {
@@ -548,16 +579,16 @@ while :; do
         [ -z "$TC_BID" ] && TC_BID="call_$((TC_EXEC - 1))"
         TC_BARGS_RAW=$(json_val "$TC_B" arguments)
         TC_BARGS=$(dec "$TC_BARGS_RAW")
-        CMD=$(json_val "$TC_BARGS" command)
+        CMD=$(get_cmd "$TC_BARGS")
         [ -n "$CMD" ] && CMD=$(dec "$CMD")
         if [ -z "$CMD" ] && [ -n "$TC_BARGS" ]; then
-          CMD=$(print -r -- "$TC_BARGS" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed 's/^"command"[[:space:]]*:[[:space:]]*"//; s/"$//')
+          CMD=$(get_cmd "$TC_BARGS_RAW")
           [ -n "$CMD" ] && CMD=$(dec "$CMD")
         fi
         if [ -z "$CMD" ] && [ -n "$TC_BARGS" ]; then
           INNER=$(json_val "$TC_BARGS" arguments)
           [ -n "$INNER" ] && INNER=$(dec "$INNER")
-          [ -n "$INNER" ] && CMD=$(json_val "$INNER" command)
+          [ -n "$INNER" ] && CMD=$(get_cmd "$INNER")
           [ -n "$CMD" ] && CMD=$(dec "$CMD")
         fi
         if [ -n "$CMD" ]; then
