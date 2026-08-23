@@ -83,7 +83,7 @@ get_cmd() {
       sub(/^[ ]*/, "", t)
       if (substr(t,1,1) == "\\") t = substr(t, 2)
       if (substr(t,1,1) == "\"") t = substr(t, 2)
-      out = ""; n = length(t); i = 1
+      n = length(t); i = 1
       while (i <= n) {
         c = substr(t, i, 1)
         if (c == "\\") {
@@ -92,14 +92,14 @@ get_cmd() {
             after = substr(t, i+2, 1)
             if (after == "," || after == "}" || after == "") break
           }
-          out = out substr(t, i, 2); i += 2
+          i += 2
         } else if (c == "\"") {
           after = substr(t, i+1, 1)
           if (after == "," || after == "}" || after == "") break
-          out = out c; i++
-        } else { out = out c; i++ }
+          i++
+        } else { i++ }
       }
-      print out
+      if (i > 1) print substr(t, 1, i - 1)
     }
   }'
 }
