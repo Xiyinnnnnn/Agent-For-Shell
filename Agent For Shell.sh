@@ -370,7 +370,7 @@ printf '
 [ "$DONE_SEEN" = 1 ] && break
 i=$((i + 1))
 [ "$i" -ge 10 ] && break
-sleep 1
+sleep 5
 done
 [ "$DONE_SEEN" = 0 ] && { ACCUM=""; REASON=""; TCB=""; return 0; }
 ACCUM=$(dec "$ACCUM")
@@ -437,7 +437,7 @@ compress_summary() {
     fi
     i=$((i + 1))
     [ "$i" -ge 10 ] && break
-    sleep 1
+    sleep 5
   done
 }
 
