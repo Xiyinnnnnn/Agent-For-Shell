@@ -9,12 +9,12 @@
 #---
 
 API_URL="https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions"
-SUMTOK=900000
+SUMTOK=524288   # 512K 压缩阈值
 AUTH_TIMEOUT=30
 REASONING_EFFORT="max"
 MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=128000
-MAXTOK=65536
+MAXTOK=32768   # 32K maxtoken
 STREAM_MODE="true"
 SEP=$(printf '\037')
 
@@ -424,7 +424,7 @@ if [ -n "$ACCUM" ]; then ACCUM=$(dec "$ACCUM"); else ACCUM="(无输出)"; fi
 compress_summary() {
   i=0
   while :; do
-    BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS,{\"role\":\"user\",\"content\":\"[总结所有]\"}],\"max_tokens\":$((MAXTOK / 2)),\"stream\":false,\"thinking\":{\"type\":\"disabled\"}}"
+    BODY="{\"model\":\"$MODEL\",\"messages\":[$MSGS,{\"role\":\"user\",\"content\":\"[总结所有]\"}],\"max_tokens\":$((MAXTOK / 4)),\"stream\":false,\"thinking\":{\"type\":\"disabled\"}}"
     RESP=$(print -r -- "$BODY" | "$CURL" -s --noproxy '*' --max-time 300 "$API_URL" \
       -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d @-)
     NEW=$(json_val "$RESP" content)
