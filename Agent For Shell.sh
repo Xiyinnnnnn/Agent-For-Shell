@@ -9,12 +9,12 @@
 #---
 
 API_URL="https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions"
-SUMTOK=524288   # 512K 压缩阈值
+SUMTOK=524288
 AUTH_TIMEOUT=30
 REASONING_EFFORT="max"
 MAX_BATCH_TOOLS=8
 MAX_BATCH_OUT=128000
-MAXTOK=32768   # 32K maxtoken
+MAXTOK=32768
 STREAM_MODE="true"
 SEP=$(printf '\037')
 
