@@ -432,7 +432,8 @@ compress_summary() {
     [ -z "$NEW" ] && NEW=$(json_val "$RESP" message)
     if [ -n "$NEW" ]; then
       SUMMARY="[历史背景] $NEW"
-      MSGS="{\"role\":\"system\",\"content\":\"$(esc "$SYS")\"},{\"role\":\"user\",\"content\":\"$(esc "$SUMMARY")\"},{\"role\":\"user\",\"content\":\"$(esc "$QUESTION")\"}"
+      SUMMARIES="${SUMMARIES:+$SUMMARIES,}{\"role\":\"user\",\"content\":\"$(esc "$SUMMARY")\"}"
+      MSGS="{\"role\":\"system\",\"content\":\"$(esc "$SYS")\"},$SUMMARIES,{\"role\":\"user\",\"content\":\"$(esc "$QUESTION")\"}"
       return 0
     fi
     i=$((i + 1))
@@ -549,6 +550,7 @@ img_build() {
 
 TOOLS='[{"type":"function","function":{"name":"RUN","description":"在终端执行 shell 命令并返回输出，一切系统操作都通过它完成","parameters":{"type":"object","properties":{"command":{"type":"string","description":"要执行的命令"},"explain":{"type":"string","description":"为什么执行这条命令"},"dangerous":{"type":"boolean","description":"是否涉及删除/覆盖/安装/系统级修改，是则true"}},"required":["command","explain","dangerous"]}}}]'
 
+SUMMARIES=""
 MSGS="{\"role\":\"system\",\"content\":\"$(esc "$SYS")\"}"
 MSGS="$MSGS,{\"role\":\"user\",\"content\":$(img_build "$QUESTION")}"
 
