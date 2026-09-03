@@ -45,6 +45,7 @@ CURL=$(command -v curl 2>/dev/null || echo /data/data/com.termux/files/usr/bin/c
 BL="rm
 dd
 su
+reboot
 pm-uninstall
 pm-clear
 pm-install
@@ -204,14 +205,16 @@ wait_vol() {
 }
 
 exec_captured() {
-  exec 3>&1
-  ERR=$(timeout 120 sh -c "$1" 2>&1 1>&3)
-  exec 3>&-
+  E=${AFS_TMPDIR:-/data/local/tmp}/afse_$$
+  OUT=$(timeout 120 sh -c "$1" 2>"$E" | head -c 20000)
+  ERR=$(cat "$E" 2>/dev/null)
+  rm -f "$E"
   if [ -n "$ERR" ]; then
     echo
     echo "[stderr]"
     print -r -- "$ERR" | head -c 4000
   fi
+  print -r -- "$OUT"
   return 0
 }
 
@@ -258,7 +261,7 @@ extract_tool_calls() {
   fi
   C=$(print -r -- "$FLAT" | sed -n 's/.*<parameter[^>]*name="command"[^>]*>\([^<]*\)<\/parameter>.*/\1/p' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   [ -n "$C" ] && { print -r -- "$C"; return 0; }
-  B=$(print -r -- "$FLAT" | grep -io -E '(run_terminal|run-terminal|runterminal|terminal|shell|bash|exec|cmd|run|终端|执行|运行|命令)[[:space:]]*\([^)]*\)' | head -n 1)
+  B=$(print -r -- "$FLAT" | grep -io -E '(run_terminal|run-terminal|runterminal)[[:space:]]*\([^)]*\)' | head -n 1)
   if [ -n "$B" ]; then
     B2=$(print -r -- "$B" | sed 's/^[^()]*([[:space:]]*//; s/)[[:space:]]*$//')
     C=$(print -r -- "$B2" | sed -n 's/.*command[[:space:]]*[:=][[:space:]]*\(["'"'"'][^"'"'"']*["'"'"']\).*/\1/p' | head -n 1 | sed 's/^["'"'"']//; s/["'"'"']$//')
@@ -267,16 +270,17 @@ extract_tool_calls() {
   fi
   C=$(print -r -- "$FLAT" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed 's/^"command"[[:space:]]*:[[:space:]]*"//; s/"$//')
   [ -n "$C" ] && { print -r -- "$C"; return 0; }
-  C=$(print -r -- "$FLAT" | grep -io -E '(run_terminal|run-terminal|runterminal|terminal|shell|bash|exec|cmd|run|终端|执行|运行|命令)[[:space:]]*[:：][[:space:]]*[^"'"'"'`<（），。；;、]+' | head -n 1 | sed 's/^[^:：]*[:：][[:space:]]*//')
+  C=$(print -r -- "$FLAT" | grep -io -E 'command[[:space:]]*[:：=][[:space:]]*[^"'"'"'`<（），。；;、]+' | head -n 1 | sed 's/^[^=:：]*[=:：][[:space:]]*//; s/^[[:space:]]*//; s/[[:space:]]*$//')
   [ -n "$C" ] && { print -r -- "$C"; return 0; }
   return 1
 }
 
 ask_llm() {
+LLM_FAILED=0
 if [ "$STREAM_MODE" = "true" ]; then
-i=0; DONE_SEEN=0
+i=0; DONE_SEEN=0; GOT_DATA=0
 while :; do
-ACCUM=""; REASON=""; TOTAL_USAGE=0; TCB=""; ACCUM_DISP=""; REASON_DISP=""
+ACCUM=""; REASON=""; TOTAL_USAGE=0; TCB=""; ACCUM_DISP=""; REASON_DISP=""; GOT_DATA=0
     TC_IDS=""; TC_NAMES=""; TC_ARGS=""; TC_X=""
     NL='
 '
@@ -338,6 +342,7 @@ END {
   print "DONE"
 }' 2>/dev/null |&
 while IFS= read -r -t 300 -p LINE 2>/dev/null; do
+[ -n "$LINE" ] && [ "$LINE" != "DONE" ] && GOT_DATA=1
 case "$LINE" in
 DONE) DONE_SEEN=1; break ;;
 A*)  OIFS=$IFS; IFS=$SEP; set -f; set -- $LINE; set +f; IFS=$OIFS
@@ -372,7 +377,8 @@ i=$((i + 1))
 [ "$i" -ge 10 ] && break
 sleep 5
 done
-[ "$DONE_SEEN" = 0 ] && { ACCUM=""; REASON=""; TCB=""; return 0; }
+[ "$DONE_SEEN" = 0 ] && { LLM_FAILED=1; ACCUM=""; REASON=""; TCB=""; return 0; }
+[ "$GOT_DATA" = 0 ] && { LLM_FAILED=1; ACCUM=""; REASON=""; TCB=""; return 0; }
 ACCUM=$(dec "$ACCUM")
 [ -n "$REASON" ] && REASON=$(dec "$REASON")
 if [ -z "$ACCUM" ]; then ACCUM="(无输出)"; fi
@@ -400,7 +406,7 @@ RESP=$(print -r -- "$1" | "$CURL" -s --noproxy '*' --max-time 300 "$API_URL" \
 -d @- 2>/dev/null)
 RESP=$(print -r -- "$RESP" | tr -d '\n')
 ACCUM=""; REASON=""; TOTAL_USAGE=0; TCB=""
-[ -z "$RESP" ] && { ACCUM="(无输出)"; return 0; }
+[ -z "$RESP" ] && { LLM_FAILED=1; ACCUM="(无输出)"; return 0; }
 C=$(json_val "$RESP" content)
 if [ -n "$C" ]; then
 echo; echo "[正文]:"
@@ -432,7 +438,7 @@ compress_summary() {
     [ -z "$NEW" ] && NEW=$(json_val "$RESP" message)
     if [ -n "$NEW" ]; then
       SUMMARY="[历史背景] $NEW"
-      SUMMARIES="${SUMMARIES:+$SUMMARIES,}{\"role\":\"user\",\"content\":\"$(esc "$SUMMARY")\"}"
+      SUMMARIES="${SUMMARIES:+$SUMMARIES,}{\"role\":\"user\",\"content\":\"$(escj "$SUMMARY")\"}"
       MSGS="{\"role\":\"system\",\"content\":\"$(esc "$SYS")\"},$SUMMARIES,{\"role\":\"user\",\"content\":\"$(esc "$QUESTION")\"}"
       return 0
     fi
@@ -573,6 +579,7 @@ while :; do
     NL='
 '
     OIFS=$IFS; IFS=$NL; set -f; set -- $TCB; set +f; IFS=$OIFS
+    TOT_REQ=$#
     TCS_JSON=""; TC_COUNT=0
     for TC_B in "$@"; do
       [ "$TC_COUNT" -ge "$MAX_BATCH_TOOLS" ] && break
@@ -587,7 +594,7 @@ while :; do
     done
     if [ "$TC_COUNT" -gt 0 ]; then
       TCS_JSON=$(print -r -- "$TCS_JSON" | sed 's/^,//')
-      if [ -n "$ACCUM" ]; then CONTENT_JSON="\"$(esc "$ACCUM")\""; else CONTENT_JSON="null"; fi
+      if [ -n "$ACCUM" ]; then CONTENT_JSON="\"$(escj "$ACCUM")\""; else CONTENT_JSON="null"; fi
       if [ -n "$REASON" ]; then REASON_JSON="\"$(escj "$REASON")\""; else REASON_JSON='""'; fi
       MSGS="$MSGS,{\"role\":\"assistant\",\"content\":$CONTENT_JSON,\"reasoning_content\":$REASON_JSON,\"tool_calls\":[$TCS_JSON]}"
       TC_EXEC=0; TOTAL_OUT=0; SKIP=0
@@ -618,7 +625,7 @@ while :; do
           echo "[工具] $CMD"
           OUT=$(run_ui "$CMD")
           TOTAL_OUT=$((TOTAL_OUT + ${#OUT}))
-          MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"$(esc "$OUT")\"}"
+          MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"$(escj "$OUT")\"}"
           if [ "$TOTAL_OUT" -gt "$MAX_BATCH_OUT" ]; then
             echo "[批量] 输出预算超限(${TOTAL_OUT}>${MAX_BATCH_OUT}),剩余命令跳过"
             SKIP=1
@@ -627,6 +634,9 @@ while :; do
           MSGS="$MSGS,{\"role\":\"tool\",\"tool_call_id\":\"$TC_BID\",\"content\":\"(工具调用解析失败)\"}"
         fi
       done
+      if [ "$TOT_REQ" -gt "$MAX_BATCH_TOOLS" ] 2>/dev/null; then
+        MSGS="$MSGS,{\"role\":\"user\",\"content\":\"(注意:本轮共${TOT_REQ}个工具调用,超过批量上限${MAX_BATCH_TOOLS},仅执行前${MAX_BATCH_TOOLS}个,其余未执行,请在下一轮重新发起。)\"}"
+      fi
       continue
     fi
   fi
@@ -652,7 +662,7 @@ while :; do
       fi
     fi
     if [ -n "$REASON" ]; then REASON_JSON="\"$(escj "$REASON")\""; else REASON_JSON='""'; fi
-    MSGS="$MSGS,{\"role\":\"assistant\",\"content\":\"$(esc "$ACCUM")\",\"reasoning_content\":$REASON_JSON}"
+    MSGS="$MSGS,{\"role\":\"assistant\",\"content\":\"$(escj "$ACCUM")\",\"reasoning_content\":$REASON_JSON}"
     OUT_ALL=""; TOTAL_OUT=0; EXEC_DONE="$NL"
     for CC in "$@"; do
       CC=$(print -r -- "$CC" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
@@ -669,11 +679,15 @@ while :; do
       OUT_ALL="$OUT_ALL |cmd| $CC => $OUT"
     done
     if [ -n "$OUT_ALL" ]; then
-      MSGS="$MSGS,{\"role\":\"user\",\"content\":\"[工具结果] $(esc "$OUT_ALL")\"}"
+      MSGS="$MSGS,{\"role\":\"user\",\"content\":\"[工具结果] $(escj "$OUT_ALL")\"}"
     else
       MSGS="$MSGS,{\"role\":\"user\",\"content\":\"(未执行任何命令)\"}"
     fi
     continue
+  fi
+  if [ "$LLM_FAILED" = 1 ]; then
+    echo "[错误] API 调用失败，任务未确认正常完成" >&2
+    exit 1
   fi
   echo "[结束] 无工具调用,会话结束"
   break
